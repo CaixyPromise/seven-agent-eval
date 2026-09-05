@@ -229,6 +229,22 @@
       ],
       "additionalProperties": true
     },
+    "stream": {
+      "type": "object",
+      "properties": {
+        "unit": { "enum": ["trace", "turn"] },
+        "window_seconds": { "type": "integer", "minimum": 1 },
+        "refresh_seconds": { "type": "integer", "minimum": 1 },
+        "allowed_lateness_seconds": { "type": "integer", "minimum": 0 },
+        "quiet_seconds": { "type": "integer", "minimum": 0 },
+        "evidence_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+        "max_pending": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "judge_sample_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "judge_per_window_budget": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["unit"],
+      "additionalProperties": false
+    },
     "plan": {
       "type": "object",
       "properties": {
@@ -244,8 +260,9 @@
         },
         "mode": {
           "enum": [
-            "invoke",
-            "replay"
+          "invoke",
+          "replay",
+          "stream"
           ]
         },
         "dataset": {
@@ -276,14 +293,19 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 300
-        }
+        },
+        "stream": { "$ref": "#/$defs/stream" }
       },
       "required": [
         "schema_version",
-        "id",
-        "dataset"
+        "id"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [{
+        "if": { "properties": { "mode": { "const": "stream" } }, "required": ["mode"] },
+        "then": { "required": ["stream"], "allOf": [{ "not": { "required": ["dataset"] } }, { "not": { "required": ["subject"] } }] },
+        "else": { "required": ["dataset"] }
+      }]
     },
     "package": {
       "type": "object",
@@ -318,6 +340,7 @@
         "source": {
           "type": "string"
         },
+        "project": { "type": "string" },
         "event_id": {
           "type": "string"
         },
@@ -328,6 +351,8 @@
         "trace_id": {
           "type": "string"
         },
+        "turn_id": { "type": "string" },
+        "evidence_revision": { "type": "integer", "minimum": 1 },
         "case": {
           "$ref": "#/$defs/case"
         },
@@ -338,6 +363,7 @@
       "required": [
         "schema_version",
         "source",
+        "project",
         "event_id",
         "event_time",
         "trace_id",
@@ -384,7 +410,8 @@
           "additionalProperties": {
             "type": "string"
           }
-        }
+        },
+        "scope": { "$ref": "#/$defs/window_scope" }
       },
       "required": [
         "plan",
@@ -417,7 +444,8 @@
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
           }
-        }
+        },
+        "scope": { "$ref": "#/$defs/window_scope" }
       },
       "required": [
         "format",
@@ -426,6 +454,22 @@
         "status",
         "files"
       ],
+      "additionalProperties": false
+    },
+    "window_scope": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "window" }, "plan_id": { "type": "string" }, "source": { "type": "string" },
+        "start": { "type": "string", "format": "date-time" }, "end": { "type": "string", "format": "date-time" },
+        "watermark": { "type": "string", "format": "date-time" }, "revision": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["provisional", "final"] }, "received": { "type": "integer", "minimum": 0 },
+        "eligible": { "type": "integer", "minimum": 0 }, "sampled": { "type": "integer", "minimum": 0 },
+        "scored": { "type": "integer", "minimum": 0 }, "not_computable": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 }, "pending": { "type": "integer", "minimum": 0 },
+        "p50_latency_ms": { "type": "number", "minimum": 0 }, "p95_latency_ms": { "type": "number", "minimum": 0 },
+        "judge_sample_rate": { "type": "number", "minimum": 0, "maximum": 1 }, "judge_per_window_budget": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["kind", "plan_id", "start", "end", "watermark", "revision", "state", "received", "eligible", "sampled", "scored", "not_computable", "failed", "pending"],
       "additionalProperties": false
     },
     "run": {
@@ -490,7 +534,8 @@
         },
         "catalogs": {
           "type": "object"
-        }
+        },
+        "scope": { "$ref": "#/$defs/window_scope" }
       },
       "required": [
         "schema_version",

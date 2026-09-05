@@ -6,6 +6,7 @@ import {
   ClipboardList,
   History,
   FileChartColumn,
+  RadioTower,
   Upload,
   Folder,
 } from "lucide-react";
@@ -25,6 +26,11 @@ const navigation = [
     key: "report",
     label: <a href="#/reports">评测报告</a>,
     icon: <FileChartColumn size={19} />,
+  },
+  {
+    key: "live",
+    label: <a href="#/live">持续评分</a>,
+    icon: <RadioTower size={19} />,
   },
 ];
 export function WorkspaceShell({

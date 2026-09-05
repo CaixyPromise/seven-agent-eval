@@ -3,9 +3,11 @@
   "value": {
     "schema_version": "evaluate.event/v1",
     "source": "fixture",
+    "project": "example.support",
     "event_id": "evt-1",
     "event_time": "2026-09-05T00:00:00Z",
     "trace_id": "trace-1",
+    "evidence_revision": 1,
     "case": {
       "id": "refund",
       "inputs": {

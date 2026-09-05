@@ -1,0 +1,4 @@
+schema_version: evaluate.package/v1
+id: example.live-support
+version: 0.1.0
+name: 客服 RAG · 持续评分

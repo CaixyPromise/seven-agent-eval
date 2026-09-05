@@ -21,6 +21,18 @@ export const errorCopy = {
     "未能确认结果是否已导入。请先查看运行记录，再决定是否重新导入。",
   EXPORT_UNKNOWN: "暂时无法下载结果。请稍后再试。",
   STREAM_LOST: "实时更新已断开，正在重新连接。也可以手动刷新状态。",
+  LOAD_LIVE_PLANS: "暂时无法读取持续评分计划。请重新扫描或稍后重试。",
+  LOAD_LIVE_REPORT: "暂时无法刷新窗口报告。请重试。",
+  LIVE_CONTROL_UNKNOWN: "未能确认暂停或恢复操作。请刷新计划状态后再试。",
+  LIVE_PLAN_INVALID: "这个计划不能持续评分。请检查 stream 配置后重新扫描。",
+  INGEST_BATCH_TOO_LARGE: "这批生产事件超过接收上限。请拆分后重新上报。",
+  EVENT_CONFLICT: "事件标识与已接收内容不一致。请使用新的事件标识上报修订。",
+  QUEUE_FULL: "评测待处理队列已满。请等待积压下降后继续上报。",
+  OTLP_ENCODING_UNSUPPORTED: "当前仅支持 JSON 编码的 OTLP 追踪数据。",
+  OTLP_MAPPING_INVALID: "追踪数据缺少持续评分所需字段，尚未接收。",
+  WINDOW_NOT_FOUND: "找不到这个时间窗口。请返回窗口列表重新选择。",
+  WINDOW_EXPORT_UNAVAILABLE: "这个窗口暂时无法导出。请刷新后重试。",
+  LIVE_UNAVAILABLE: "持续评分服务暂不可用。请确认本地服务后重试。",
 } as const;
 export type ErrorCode = keyof typeof errorCopy;
 export class ProductError extends Error {

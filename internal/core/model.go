@@ -8,6 +8,9 @@ import (
 const Version = "1.0"
 const MaxCases = 1000
 const MaxFileBytes = 32 << 20
+const MaxLiveEventBytes = 1 << 20
+const MaxLiveBatch = 100
+const MaxLivePending = 10000
 
 type Package struct {
 	SchemaVersion string `json:"schema_version" yaml:"schema_version"`
@@ -30,16 +33,32 @@ type Discovery struct {
 	Assets  []Asset `json:"assets"`
 }
 type Plan struct {
-	SchemaVersion  string    `json:"schema_version" yaml:"schema_version"`
-	ID             string    `json:"id" yaml:"id"`
-	Preset         string    `json:"preset" yaml:"preset"`
-	Mode           string    `json:"mode" yaml:"mode"`
-	Dataset        string    `json:"dataset" yaml:"dataset"`
-	Subject        string    `json:"subject,omitempty" yaml:"subject,omitempty"`
-	Evaluators     *[]string `json:"evaluators" yaml:"evaluators"`
-	Processors     *[]string `json:"processors" yaml:"processors"`
-	Conclusions    *[]string `json:"conclusions" yaml:"conclusions"`
-	TimeoutSeconds int       `json:"timeout_seconds" yaml:"timeout_seconds"`
+	SchemaVersion  string        `json:"schema_version" yaml:"schema_version"`
+	ID             string        `json:"id" yaml:"id"`
+	Preset         string        `json:"preset" yaml:"preset"`
+	Mode           string        `json:"mode" yaml:"mode"`
+	Dataset        string        `json:"dataset" yaml:"dataset"`
+	Subject        string        `json:"subject,omitempty" yaml:"subject,omitempty"`
+	Evaluators     *[]string     `json:"evaluators" yaml:"evaluators"`
+	Processors     *[]string     `json:"processors" yaml:"processors"`
+	Conclusions    *[]string     `json:"conclusions" yaml:"conclusions"`
+	TimeoutSeconds int           `json:"timeout_seconds" yaml:"timeout_seconds"`
+	Stream         *StreamConfig `json:"stream,omitempty" yaml:"stream,omitempty"`
+}
+
+// StreamConfig is intentionally small: the plan owns scoring policy while the
+// receiver owns transport. It keeps online streams on the same recipe seams as
+// offline plans without giving a production event a Subject to invoke.
+type StreamConfig struct {
+	Unit                   string   `json:"unit" yaml:"unit"`
+	WindowSeconds          int      `json:"window_seconds" yaml:"window_seconds"`
+	RefreshSeconds         int      `json:"refresh_seconds" yaml:"refresh_seconds"`
+	AllowedLatenessSeconds int      `json:"allowed_lateness_seconds" yaml:"allowed_lateness_seconds"`
+	QuietSeconds           int      `json:"quiet_seconds" yaml:"quiet_seconds"`
+	EvidenceTimeoutSeconds int      `json:"evidence_timeout_seconds" yaml:"evidence_timeout_seconds"`
+	MaxPending             int      `json:"max_pending" yaml:"max_pending"`
+	JudgeSampleRate        *float64 `json:"judge_sample_rate,omitempty" yaml:"judge_sample_rate,omitempty"`
+	JudgePerWindowBudget   *int     `json:"judge_per_window_budget,omitempty" yaml:"judge_per_window_budget,omitempty"`
 }
 type Effective struct {
 	Files       map[string]string `json:"files"`
@@ -116,6 +135,55 @@ type Run struct {
 	Outputs       []ProcessorOutput `json:"outputs"`
 	Conclusions   []Conclusion      `json:"conclusions"`
 	Catalogs      map[string]any    `json:"catalogs"`
+	Scope         *WindowScope      `json:"scope,omitempty"`
+}
+type WindowScope struct {
+	Kind            string    `json:"kind"`
+	PlanID          string    `json:"plan_id"`
+	Source          string    `json:"source,omitempty"`
+	Start           time.Time `json:"start"`
+	End             time.Time `json:"end"`
+	Watermark       time.Time `json:"watermark"`
+	Revision        int       `json:"revision"`
+	State           string    `json:"state"`
+	Received        int       `json:"received"`
+	Eligible        int       `json:"eligible"`
+	Sampled         int       `json:"sampled"`
+	Scored          int       `json:"scored"`
+	NotComputable   int       `json:"not_computable"`
+	Failed          int       `json:"failed"`
+	Pending         int       `json:"pending"`
+	P50LatencyMS    *float64  `json:"p50_latency_ms,omitempty"`
+	P95LatencyMS    *float64  `json:"p95_latency_ms,omitempty"`
+	JudgeSampleRate *float64  `json:"judge_sample_rate,omitempty"`
+	JudgeBudget     *int      `json:"judge_per_window_budget,omitempty"`
+}
+type ProductionEvent struct {
+	SchemaVersion    string        `json:"schema_version"`
+	Source           string        `json:"source"`
+	Project          string        `json:"project"`
+	EventID          string        `json:"event_id"`
+	EventTime        time.Time     `json:"event_time"`
+	TraceID          string        `json:"trace_id"`
+	TurnID           string        `json:"turn_id,omitempty"`
+	EvidenceRevision int           `json:"evidence_revision"`
+	Case             Case          `json:"case"`
+	Result           SubjectResult `json:"result"`
+}
+type IngestBatch struct {
+	PlanID string            `json:"plan_id"`
+	Events []ProductionEvent `json:"events"`
+}
+type IngestItem struct {
+	EventID string `json:"event_id"`
+	Status  string `json:"status"`
+	Code    string `json:"code,omitempty"`
+}
+type IngestResult struct {
+	Accepted  int          `json:"accepted"`
+	Duplicate int          `json:"duplicate"`
+	Rejected  int          `json:"rejected"`
+	Items     []IngestItem `json:"items"`
 }
 type Event struct {
 	Sequence int             `json:"sequence"`

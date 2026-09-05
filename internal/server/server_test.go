@@ -166,3 +166,75 @@ func TestCrossOriginAndHostRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveIngestPauseOTLPAndWindowExport(t *testing.T) {
+	_, f, _, _ := runtime.Caller(0)
+	home := filepath.Clean(filepath.Join(filepath.Dir(f), "../.."))
+	root := t.TempDir()
+	if err := core.InitPackage(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "plans", "production.yaml"), []byte("schema_version: evaluate.plan/v1\nid: production\nmode: stream\nstream:\n  unit: trace\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := core.NewStore(filepath.Join(root, ".seven-evaluate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := New(&core.Engine{Root: root, Store: store, Worker: core.NewWorker(home)}, filepath.Join(home, "web/dist"))
+	target := httptest.NewServer(app.Handler())
+	t.Cleanup(func() { target.Close(); app.Shutdown(); store.Close() })
+
+	response, err := http.Get(target.URL + "/api/live/plans")
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("plans: %v %v", response.Status, err)
+	}
+	response.Body.Close()
+	batch := `{"plan_id":"production","events":[{"schema_version":"evaluate.event/v1","source":"test","project":"demo","event_id":"one","event_time":"2026-09-05T07:52:10Z","trace_id":"trace-one","evidence_revision":1,"case":{"id":"one","inputs":{"question":"hello"},"references":{"exact":"hello"}},"result":{"response":"hello","latency_ms":12}}]}`
+	response, err = http.Post(target.URL+"/api/ingest/events", "application/json", strings.NewReader(batch))
+	if err != nil || response.StatusCode != http.StatusAccepted {
+		t.Fatalf("ingest: %v %v", response.Status, err)
+	}
+	response.Body.Close()
+	response, err = http.Post(target.URL+"/api/live/plans/production/pause", "application/json", nil)
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("pause: %v %v", response.Status, err)
+	}
+	response.Body.Close()
+	response, err = http.Post(target.URL+"/api/live/plans/production/resume", "application/json", nil)
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("resume: %v %v", response.Status, err)
+	}
+	response.Body.Close()
+	deadline := time.Now().Add(6 * time.Second)
+	var report core.LiveReport
+	for time.Now().Before(deadline) {
+		response, err = http.Get(target.URL + "/api/live/plans/production/report?range=24h")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewDecoder(response.Body).Decode(&report)
+		response.Body.Close()
+		if report.Current != nil && report.Current.Scope.Scored == 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if report.Current == nil || report.Current.Scope.Scored != 1 {
+		t.Fatalf("report not scored: %+v", report)
+	}
+	response, err = http.Get(target.URL + "/api/live/windows/" + report.Current.ID + "/export")
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("export: %v %v", response.Status, err)
+	}
+	bundle, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if _, err = core.Import(bytes.NewReader(bundle), int64(len(bundle))); err != nil {
+		t.Fatal(err)
+	}
+	response, err = http.Post(target.URL+"/v1/traces", "application/x-protobuf", strings.NewReader("no"))
+	if err != nil || response.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("unsupported OTLP: %v %v", response.Status, err)
+	}
+	response.Body.Close()
+}

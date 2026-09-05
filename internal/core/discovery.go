@@ -256,7 +256,42 @@ func Resolve(root string, d Discovery, id string) (Effective, error) {
 	if out.Plan.TimeoutSeconds == 0 {
 		out.Plan.TimeoutSeconds = 120
 	}
-	if _, e = Lookup(d, out.Plan.Dataset, "dataset"); e != nil {
+	if out.Plan.Mode != "invoke" && out.Plan.Mode != "replay" && out.Plan.Mode != "stream" {
+		return out, errors.New("plan mode must be invoke, replay or stream")
+	}
+	if out.Plan.Mode == "stream" {
+		if out.Plan.Stream == nil || (out.Plan.Stream.Unit != "trace" && out.Plan.Stream.Unit != "turn") {
+			return out, errors.New("stream plan requires unit trace or turn")
+		}
+		if out.Plan.Dataset != "" || out.Plan.Subject != "" {
+			return out, errors.New("stream plan cannot define dataset or subject")
+		}
+		stream := out.Plan.Stream
+		if stream.WindowSeconds == 0 {
+			stream.WindowSeconds = 60
+		}
+		if stream.RefreshSeconds == 0 {
+			stream.RefreshSeconds = 5
+		}
+		if stream.AllowedLatenessSeconds == 0 {
+			stream.AllowedLatenessSeconds = 60
+		}
+		if stream.QuietSeconds == 0 {
+			stream.QuietSeconds = 5
+		}
+		if stream.EvidenceTimeoutSeconds == 0 {
+			stream.EvidenceTimeoutSeconds = 120
+		}
+		if stream.MaxPending == 0 {
+			stream.MaxPending = MaxLivePending
+		}
+		if stream.WindowSeconds < 1 || stream.RefreshSeconds < 1 || stream.AllowedLatenessSeconds < 0 || stream.QuietSeconds < 0 || stream.EvidenceTimeoutSeconds < 1 || stream.EvidenceTimeoutSeconds > 300 || stream.MaxPending < 1 || stream.MaxPending > MaxLivePending {
+			return out, errors.New("stream limits are invalid")
+		}
+		if (stream.JudgeSampleRate == nil) != (stream.JudgePerWindowBudget == nil) || (stream.JudgeSampleRate != nil && (*stream.JudgeSampleRate < 0 || *stream.JudgeSampleRate > 1 || *stream.JudgePerWindowBudget < 0)) {
+			return out, errors.New("judge sampling and budget must be configured together")
+		}
+	} else if _, e = Lookup(d, out.Plan.Dataset, "dataset"); e != nil {
 		return out, e
 	}
 	if out.Plan.Mode == "invoke" {

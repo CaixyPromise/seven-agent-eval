@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/santhosh-tekuri/jsonschema/v6"
-	"strings"
 	"sync"
 )
 
@@ -46,7 +45,7 @@ func Validate(kind string, value any) error {
 		return err
 	}
 	if err = contract.Validate(v); err != nil {
-		return fmt.Errorf("invalid %s: %s", kind, strings.Split(err.Error(), "\n")[0])
+		return fmt.Errorf("invalid %s: %w", kind, err)
 	}
 	return nil
 }

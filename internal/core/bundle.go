@@ -22,6 +22,7 @@ type Manifest struct {
 	RunID         string            `json:"run_id"`
 	Status        string            `json:"status"`
 	Files         map[string]string `json:"files"`
+	Scope         *WindowScope      `json:"scope,omitempty"`
 }
 
 const reportTemplate = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
@@ -122,7 +123,7 @@ func Export(r Run, dest string) error {
 	if err != nil {
 		return err
 	}
-	m := Manifest{Format: "seven.eval", SchemaVersion: Version, RunID: r.ID, Status: r.Status, Files: map[string]string{}}
+	m := Manifest{Format: "seven.eval", SchemaVersion: Version, RunID: r.ID, Status: r.Status, Files: map[string]string{}, Scope: r.Scope}
 	total := 0
 	for name, b := range files {
 		m.Files[name] = Hash(b)

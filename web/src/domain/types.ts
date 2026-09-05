@@ -57,3 +57,56 @@ export type BasicSummary = {
   failure_ids?: string[];
   series?: Series[];
 };
+
+export type LivePlan = {
+  id: string;
+  name: string;
+  unit: "trace" | "turn";
+  paused: boolean;
+  pending: number;
+  storage_bytes: number;
+};
+
+export type WindowScope = {
+  kind: "window";
+  plan_id: string;
+  start: string;
+  end: string;
+  watermark: string;
+  revision: number;
+  state: "provisional" | "final";
+  received: number;
+  eligible: number;
+  sampled: number;
+  scored: number;
+  not_computable: number;
+  failed: number;
+  pending: number;
+  p50_latency_ms?: number;
+  p95_latency_ms?: number;
+  judge_sample_rate?: number;
+  judge_per_window_budget?: number;
+};
+
+export type LiveWindow = Run & { scope: WindowScope };
+
+export type LivePoint = {
+  time: string;
+  coverage?: number;
+  received: number;
+  scored: number;
+  not_computable: number;
+  failed: number;
+  pending: number;
+  p50_latency_ms?: number;
+  p95_latency_ms?: number;
+};
+
+export type LiveReport = {
+  plan: LivePlan;
+  from: string;
+  to: string;
+  current?: LiveWindow;
+  windows: LiveWindow[];
+  series: LivePoint[];
+};

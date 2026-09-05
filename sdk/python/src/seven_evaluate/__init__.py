@@ -17,3 +17,7 @@ def processor(**kwargs):
 
 def conclusion(**kwargs):
     return _define("conclusion", **kwargs)
+
+from .exporter import AsyncEEPExporter
+
+__all__ = ["subject", "evaluator", "processor", "conclusion", "AsyncEEPExporter"]

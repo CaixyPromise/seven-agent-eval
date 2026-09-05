@@ -32,6 +32,8 @@ export const statusNames: Record<string, string> = {
   skipped: "已跳过",
   not_applicable: "不适用",
   not_computable: "证据不足",
+  provisional: "待封板",
+  final: "已封板",
 };
 export const reasonNames: Record<string, string> = {
   missing_response: "缺少回答",

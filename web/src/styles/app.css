@@ -455,6 +455,70 @@ pre {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.live-actions .ant-select {
+  min-width: 184px;
+}
+.live-paused {
+  margin-bottom: 20px;
+}
+.live-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.live-kpis .summary-card .ant-card-body {
+  min-height: 114px;
+  padding: 18px;
+}
+.live-kpis .ant-statistic-title {
+  min-height: 28px;
+}
+.live-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 22px;
+}
+.live-chart-grid .ant-card {
+  min-width: 0;
+}
+.live-chart-grid .ant-card-head {
+  min-height: 50px;
+}
+.live-chart {
+  width: 100%;
+  height: 245px;
+}
+.live-window-panel {
+  margin-bottom: 0;
+}
+.live-window-panel .panel-toolbar .muted {
+  margin-left: auto;
+  font-size: 13px;
+}
+.live-drawer .ant-alert {
+  margin-bottom: 22px;
+}
+.live-drawer section {
+  margin-top: 26px;
+}
+.window-sample {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  overflow-wrap: anywhere;
+}
 .ant-btn {
   transition: transform 120ms ease-out;
 }
@@ -484,6 +548,9 @@ pre {
   .panel-toolbar {
     gap: 12px;
   }
+  .live-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .filter-scroll {
     order: 3;
     flex-basis: 100%;
@@ -500,6 +567,9 @@ pre {
     margin-top: 8px;
   }
   .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .live-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .heading-actions {
@@ -605,6 +675,26 @@ pre {
   }
   .ant-btn-icon-only {
     min-width: 38px;
+  }
+  .live-actions .ant-select {
+    width: 100%;
+  }
+  .live-actions .ant-segmented {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .live-kpis,
+  .live-chart-grid {
+    grid-template-columns: 1fr;
+  }
+  .live-kpis .summary-card .ant-card-body {
+    min-height: auto;
+  }
+  .live-chart {
+    height: 224px;
+  }
+  .live-window-panel .panel-toolbar .muted {
+    margin-left: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {

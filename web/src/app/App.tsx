@@ -22,6 +22,7 @@ const ImportDialog = lazy(() =>
   })),
 );
 const ReportPage = lazy(() => import("../features/reports/ReportPage"));
+const LivePage = lazy(() => import("../features/live/LivePage"));
 const loadDiscovery = (signal: AbortSignal) => evaluationApi.discovery(signal);
 const loadRuns = (signal: AbortSignal) => evaluationApi.runs(signal);
 export default function App() {
@@ -107,6 +108,10 @@ export default function App() {
             busy={starting}
           />
         </>
+      ) : route.page === "live" ? (
+        <Suspense fallback={<LoadingState label="正在加载持续评分工作台" />}>
+          <LivePage />
+        </Suspense>
       ) : route.page === "report" && route.runId ? (
         <Suspense fallback={<LoadingState />}>
           <ReportPage

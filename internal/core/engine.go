@@ -96,6 +96,130 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 	r.Effective.Digest = Digest(r.Effective)
 	return r, e.Store.Commit(&r, "run.started", nil)
 }
+
+// PrepareStream freezes the same recipe assets as an offline run but deliberately
+// has no dataset snapshot or Subject. Production events already carry evidence.
+func (e *Engine) PrepareStream(ctx context.Context, planID string) (Run, error) {
+	d, err := Discover(ctx, e.Root, e.Worker)
+	if err != nil {
+		return Run{}, err
+	}
+	effective, err := Resolve(e.Root, d, planID)
+	if err != nil {
+		return Run{}, planError(err)
+	}
+	if effective.Plan.Mode != "stream" {
+		return Run{}, planError(errors.New("plan is not a stream"))
+	}
+	// Stream plans intentionally have no input snapshot. Keep the serialized
+	// effective configuration schema-valid and explicit rather than emitting a
+	// JSON null for its provenance map.
+	effective.Files = map[string]string{}
+	var catalogs map[string]any
+	c, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err = e.Worker.Call(c, "catalogs", map[string]any{}, &catalogs); err != nil {
+		return Run{}, err
+	}
+	for _, a := range d.Assets {
+		if a.Kind == "catalog" && a.Status == "valid" {
+			catalogs["local:"+a.ID] = a.Descriptor
+		}
+	}
+	for _, reference := range effective.Evaluators {
+		a, lookupErr := Lookup(d, reference, "evaluator")
+		if lookupErr != nil {
+			return Run{}, planError(lookupErr)
+		}
+		if a.Source == "local" {
+			if ids, ok := a.Descriptor["metrics"].([]any); ok {
+				for _, id := range ids {
+					if !catalogContains(catalogs, fmt.Sprint(id)) {
+						return Run{}, planError(fmt.Errorf("metric %v missing from catalogs", id))
+					}
+				}
+			}
+		}
+	}
+	r := Run{SchemaVersion: Version, ID: "stream-" + planID, Package: d.Package, CreatedAt: time.Now().UTC(), Status: "processing", Total: 0, Completed: 0, Effective: effective, DatasetDigest: "", Cases: []CaseResult{}, Outputs: []ProcessorOutput{}, Conclusions: []Conclusion{}, Catalogs: catalogs}
+	r.Effective.Digest = Digest(r.Effective)
+	return r, nil
+}
+
+// EvaluateExisting is the replay half of Execute exposed for persisted online
+// evidence. It never crosses the Subject seam.
+func (e *Engine) EvaluateExisting(ctx context.Context, r *Run, c Case, result SubjectResult) (CaseResult, error) {
+	cr := CaseResult{Case: c, Status: "completed", Attempt: 0, Result: result, Evidence: []Evidence{{ID: c.ID + ":response", Kind: "response", Value: result.Response}}, Metrics: []Metric{}}
+	if len(result.Contexts) > 0 {
+		cr.Evidence = append(cr.Evidence, Evidence{ID: c.ID + ":contexts", Kind: "retrieval", Value: result.Contexts})
+	}
+	subjectStatus, subjectReason := cr.Status, cr.Reason
+	for _, ref := range r.Effective.Evaluators {
+		var ms []Metric
+		err := e.extension(ctx, r, ref, "evaluator", "evaluator/evaluate", map[string]any{"case": c, "result": result, "status": subjectStatus, "reason": subjectReason}, &ms)
+		if err == nil {
+			for _, m := range ms {
+				if err = protocol.Validate("metric", m); err != nil {
+					break
+				}
+				if m.CaseID != c.ID || !catalogContains(r.Catalogs, m.MetricID) {
+					err = errors.New("metric identity/catalog mismatch")
+					break
+				}
+			}
+		}
+		if err != nil {
+			cr.Status, cr.Reason = "error", "evaluator_error"
+			ms = []Metric{{ID: c.ID + ":" + ref + ":error", CaseID: c.ID, MetricID: "evaluation.error", Status: "error", Reason: "evaluator_error", Evaluator: ref, Value: nil}}
+		}
+		cr.Metrics = append(cr.Metrics, ms...)
+	}
+	before := Digest(cr)
+	if b, err := json.Marshal(e.redactForRun(r, cr)); err == nil {
+		_ = decodeJSON(b, &cr)
+	}
+	cr.RedactionApplied = before != Digest(cr)
+	return cr, nil
+}
+
+// ProcessExisting is shared by finite windows and ordinary runs so a closed
+// window has exactly the same processor/conclusion semantics as its export.
+func (e *Engine) ProcessExisting(ctx context.Context, r *Run) error {
+	r.Outputs, r.Conclusions = []ProcessorOutput{}, []Conclusion{}
+	inputDigest := Digest(r.Cases)
+	for _, ref := range r.Effective.Processors {
+		var output ProcessorOutput
+		err := e.extension(ctx, r, ref, "processor", "processor/process", map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest}, &output)
+		if err == nil {
+			err = protocol.Validate("processor_output", output)
+		}
+		if err != nil {
+			r.Message = "Processor failed; no fallback statistics were substituted"
+			r.Status = "partial"
+			continue
+		}
+		output.InputDigest = inputDigest
+		r.Outputs = append(r.Outputs, output)
+	}
+	for _, ref := range r.Effective.Conclusions {
+		var conclusions []Conclusion
+		err := e.extension(ctx, r, ref, "conclusion", "conclusion/conclude", map[string]any{"outputs": r.Outputs, "cases": r.Cases}, &conclusions)
+		if err == nil {
+			for _, c := range conclusions {
+				if err = protocol.Validate("conclusion", c); err != nil {
+					break
+				}
+			}
+		}
+		if err != nil {
+			r.Message = "Conclusion failed; see available facts"
+			r.Status = "partial"
+			continue
+		}
+		r.Conclusions = append(r.Conclusions, conclusions...)
+	}
+	return nil
+}
 func catalogContains(value any, id string) bool {
 	switch v := value.(type) {
 	case map[string]any:

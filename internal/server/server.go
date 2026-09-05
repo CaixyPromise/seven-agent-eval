@@ -21,6 +21,8 @@ import (
 
 type Server struct {
 	Engine  *core.Engine
+	Live    *core.LiveManager
+	liveErr error
 	WebDir  string
 	mu      sync.Mutex
 	active  map[string]context.CancelFunc
@@ -29,7 +31,11 @@ type Server struct {
 }
 
 func New(e *core.Engine, web string) *Server {
-	return &Server{Engine: e, WebDir: web, active: map[string]context.CancelFunc{}}
+	live, err := core.NewLiveManager(e)
+	if err == nil {
+		live.Start()
+	}
+	return &Server{Engine: e, Live: live, liveErr: err, WebDir: web, active: map[string]context.CancelFunc{}}
 }
 func (s *Server) Shutdown() {
 	s.mu.Lock()
@@ -39,6 +45,9 @@ func (s *Server) Shutdown() {
 	}
 	s.mu.Unlock()
 	s.wg.Wait()
+	if s.Live != nil {
+		_ = s.Live.Close()
+	}
 }
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -156,6 +165,15 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /api/runs/{id}/export", s.export)
 	mux.HandleFunc("POST /api/import", s.importRun)
+	mux.HandleFunc("GET /api/live/plans", s.livePlans)
+	mux.HandleFunc("GET /api/live/plans/{id}/report", s.liveReport)
+	mux.HandleFunc("GET /api/live/plans/{id}/events", s.liveEvents)
+	mux.HandleFunc("POST /api/live/plans/{id}/pause", s.livePause)
+	mux.HandleFunc("POST /api/live/plans/{id}/resume", s.liveResume)
+	mux.HandleFunc("GET /api/live/windows/{id}", s.liveWindow)
+	mux.HandleFunc("GET /api/live/windows/{id}/export", s.liveExport)
+	mux.HandleFunc("POST /api/ingest/events", s.ingest)
+	mux.HandleFunc("POST /v1/traces", s.ingestOTLP)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, map[string]string{"status": "ok", "version": core.Version})
 	})
@@ -188,6 +206,206 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 		mux.ServeHTTP(w, r)
 	})
+}
+func (s *Server) liveUnavailable(w http.ResponseWriter) bool {
+	if s.Live != nil {
+		return false
+	}
+	failureCode(w, "LIVE_UNAVAILABLE", http.StatusServiceUnavailable)
+	return true
+}
+func liveCode(err error) (string, int) {
+	switch err.Error() {
+	case "plan is not a stream":
+		return "LIVE_PLAN_INVALID", http.StatusBadRequest
+	case "ingest batch too large":
+		return "INGEST_BATCH_TOO_LARGE", http.StatusRequestEntityTooLarge
+	case "window not found":
+		return "WINDOW_NOT_FOUND", http.StatusNotFound
+	case "OTLP plan mapping missing", "OTLP root mapping missing", "OTLP contains no mappable trace", "event does not contain the plan evaluation unit":
+		return "OTLP_MAPPING_REQUIRED", http.StatusBadRequest
+	case "OTLP batch contains multiple plans":
+		return "OTLP_PLAN_CONFLICT", http.StatusBadRequest
+	case "invalid report range":
+		return "WINDOW_RANGE_INVALID", http.StatusBadRequest
+	case "ingest request requires plan and events":
+		return "INGEST_INVALID", http.StatusBadRequest
+	default:
+		return "LIVE_UNAVAILABLE", http.StatusServiceUnavailable
+	}
+}
+func liveFailure(w http.ResponseWriter, err error) {
+	code, status := liveCode(err)
+	failureCode(w, code, status)
+}
+func (s *Server) livePlans(w http.ResponseWriter, r *http.Request) {
+	if s.liveUnavailable(w) {
+		return
+	}
+	plans, err := s.Live.Plans(r.Context())
+	if err != nil {
+		liveFailure(w, err)
+		return
+	}
+	jsonOut(w, plans)
+}
+func liveRange(value string) (time.Duration, bool) {
+	switch value {
+	case "15m":
+		return 15 * time.Minute, true
+	case "1h", "":
+		return time.Hour, true
+	case "6h":
+		return 6 * time.Hour, true
+	case "24h":
+		return 24 * time.Hour, true
+	}
+	return 0, false
+}
+func (s *Server) liveReport(w http.ResponseWriter, r *http.Request) {
+	if s.liveUnavailable(w) {
+		return
+	}
+	d, ok := liveRange(r.URL.Query().Get("range"))
+	if !ok {
+		failureCode(w, "WINDOW_RANGE_INVALID", 400)
+		return
+	}
+	to := time.Now().UTC()
+	report, err := s.Live.Report(r.Context(), r.PathValue("id"), to.Add(-d), to)
+	if err != nil {
+		liveFailure(w, err)
+		return
+	}
+	jsonOut(w, report)
+}
+func (s *Server) livePause(w http.ResponseWriter, r *http.Request) {
+	if s.liveUnavailable(w) {
+		return
+	}
+	v, err := s.Live.SetPaused(r.Context(), r.PathValue("id"), true)
+	if err != nil {
+		liveFailure(w, err)
+		return
+	}
+	jsonOut(w, v)
+}
+func (s *Server) liveResume(w http.ResponseWriter, r *http.Request) {
+	if s.liveUnavailable(w) {
+		return
+	}
+	v, err := s.Live.SetPaused(r.Context(), r.PathValue("id"), false)
+	if err != nil {
+		liveFailure(w, err)
+		return
+	}
+	jsonOut(w, v)
+}
+func (s *Server) liveWindow(w http.ResponseWriter, r *http.Request) {
+	if s.liveUnavailable(w) {
+		return
+	}
+	v, err := s.Live.Window(r.Context(), r.PathValue("id"))
+	if err != nil {
+		liveFailure(w, err)
+		return
+	}
+	jsonOut(w, v)
+}
+func (s *Server) liveExport(w http.ResponseWriter, r *http.Request) {
+	if s.liveUnavailable(w) {
+		return
+	}
+	run, err := s.Live.Window(r.Context(), r.PathValue("id"))
+	if err != nil {
+		liveFailure(w, err)
+		return
+	}
+	s.exportRun(w, r, run)
+}
+func (s *Server) liveEvents(w http.ResponseWriter, r *http.Request) {
+	if s.liveUnavailable(w) {
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		failureCode(w, "LIVE_UNAVAILABLE", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	previous := ""
+	for {
+		d, ok := liveRange(r.URL.Query().Get("range"))
+		if !ok {
+			d = time.Hour
+		}
+		to := time.Now().UTC()
+		report, err := s.Live.Report(r.Context(), r.PathValue("id"), to.Add(-d), to)
+		if err != nil {
+			return
+		}
+		body, _ := json.Marshal(report)
+		if string(body) != previous {
+			fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", body)
+			flusher.Flush()
+			previous = string(body)
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
+	if s.liveUnavailable(w) {
+		return
+	}
+	var batch core.IngestBatch
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, int64(core.MaxLiveBatch*core.MaxLiveEventBytes)+4096))
+	decoder.UseNumber()
+	if err := decoder.Decode(&batch); err != nil {
+		failureCode(w, "INGEST_INVALID", 400)
+		return
+	}
+	result, err := s.Live.Ingest(r.Context(), batch)
+	if err != nil {
+		liveFailure(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(result)
+}
+func (s *Server) ingestOTLP(w http.ResponseWriter, r *http.Request) {
+	if s.liveUnavailable(w) {
+		return
+	}
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		failureCode(w, "OTLP_ENCODING_UNSUPPORTED", http.StatusUnsupportedMediaType)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20))
+	if err != nil {
+		failureCode(w, "INGEST_BATCH_TOO_LARGE", 413)
+		return
+	}
+	batch, err := core.MapOTLPJSON(body)
+	if err != nil {
+		liveFailure(w, err)
+		return
+	}
+	result, err := s.Live.Ingest(r.Context(), batch)
+	if err != nil {
+		liveFailure(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(result)
 }
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -287,6 +505,9 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		failure(w, errors.New("run not found"), 404)
 		return
 	}
+	s.exportRun(w, r, run)
+}
+func (s *Server) exportRun(w http.ResponseWriter, r *http.Request, run core.Run) {
 	dir, e := os.MkdirTemp("", "seven-export-")
 	if e != nil {
 		failure(w, e, 500)
