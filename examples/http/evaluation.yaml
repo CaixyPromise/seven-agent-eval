@@ -1,0 +1,4 @@
+schema_version: evaluate.package/v1
+id: example.http-support
+version: 0.1.0
+name: HTTP 目标 · 实时运行

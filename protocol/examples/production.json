@@ -1,0 +1,25 @@
+{
+  "kind": "production_event",
+  "value": {
+    "schema_version": "evaluate.event/v1",
+    "source": "fixture",
+    "event_id": "evt-1",
+    "event_time": "2026-09-05T00:00:00Z",
+    "trace_id": "trace-1",
+    "case": {
+      "id": "refund",
+      "inputs": {
+        "question": "退款多久？"
+      },
+      "references": {
+        "exact": "退款需 3 个工作日"
+      }
+    },
+    "result": {
+      "response": "退款需 3 个工作日",
+      "contexts": [
+        "退款处理时间为 3 个工作日。"
+      ]
+    }
+  }
+}

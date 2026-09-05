@@ -1,0 +1,5 @@
+{"id":"refund","inputs":{"question":"退款需要多久？"},"response":"3 个工作日","references":{"exact":"3 个工作日"},"contexts":["退款会在 3 个工作日内处理。"]}
+{"id":"delivery","inputs":{"question":"输出配送状态 JSON"},"response":"{\"status\":\"shipped\"}","references":{"schema":{"type":"object","required":["status"],"properties":{"status":{"enum":["shipped","pending"]}}}}}
+{"id":"wrong-answer","inputs":{"question":"客服电话是什么？"},"response":"12345","references":{"exact":"400-123-4567"}}
+{"id":"missing-answer","inputs":{"question":"如何取消订单？"},"response":null}
+{"id":"unlabelled","inputs":{"question":"有什么优惠？"},"response":"请查看活动页面。","contexts":[]}

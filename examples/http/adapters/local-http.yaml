@@ -1,0 +1,9 @@
+id: local-http
+version: 1.0.0
+type: http
+endpoint: http://127.0.0.1:7432/respond
+request:
+  question: $.question
+response_path: $.answer
+contexts_path: $.contexts
+usage_path: $.usage

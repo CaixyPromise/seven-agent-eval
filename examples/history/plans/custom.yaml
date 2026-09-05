@@ -1,0 +1,6 @@
+schema_version: evaluate.plan/v1
+id: custom
+mode: replay
+dataset: dataset:questions
+processors:
+  - processor:team-summary

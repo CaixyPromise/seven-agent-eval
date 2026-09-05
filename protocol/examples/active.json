@@ -1,0 +1,9 @@
+{
+  "kind": "subject_result",
+  "value": {
+    "response": "退款需 3 个工作日",
+    "contexts": [
+      "退款处理时间为 3 个工作日。"
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+{"id":"refund","inputs":{"question":"退款需要多久？"},"references":{"exact":"3 个工作日"}}
+{"id":"delivery","inputs":{"question":"配送需要多久？"},"references":{"exact":"2 天"}}
+{"id":"unknown","inputs":{"question":"告诉我未公布的活动"},"references":{"exact":"我不知道"}}

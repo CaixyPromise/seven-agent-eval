@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+web/dist/
+bin/
+.seven-evaluate/
+*.seven.eval
+artifacts/
+.DS_Store
+.playwright-cli/
+output/playwright/

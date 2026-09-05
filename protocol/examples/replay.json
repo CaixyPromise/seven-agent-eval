@@ -1,0 +1,16 @@
+{
+  "kind": "case",
+  "value": {
+    "id": "refund",
+    "inputs": {
+      "question": "退款多久？"
+    },
+    "response": "退款需 3 个工作日",
+    "contexts": [
+      "退款处理时间为 3 个工作日。"
+    ],
+    "references": {
+      "exact": "退款需 3 个工作日"
+    }
+  }
+}
