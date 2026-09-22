@@ -1,0 +1,4 @@
+schema_version: evaluate.package/v1
+id: test.browser-live-scenarios
+version: 1.0.0
+name: 浏览器验收 · 持续评分场景

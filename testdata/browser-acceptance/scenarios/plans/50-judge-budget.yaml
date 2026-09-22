@@ -1,0 +1,8 @@
+schema_version: evaluate.plan/v1
+id: judge-budget-exhausted
+mode: stream
+evaluators: [evaluator:basic, evaluator:browser-judge]
+stream:
+  unit: trace
+  judge_sample_rate: 1
+  judge_per_window_budget: 1

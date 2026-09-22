@@ -112,6 +112,7 @@ export default function LivePage() {
         requestVersion.current++;
         setReport(JSON.parse((event as MessageEvent<string>).data) as LiveReport);
         setError(null);
+        setLoading(false);
       } catch {
         setError("STREAM_LOST");
       }

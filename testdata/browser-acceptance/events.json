@@ -1,0 +1,27 @@
+{
+  "production-support-refund-quality-evaluation-with-a-deliberately-long-plan-identifier": [
+    {"key":"normal","response":"退款会在 3 个工作日内原路退回。","reference":"退款会在 3 个工作日内原路退回。","contexts":["退款审核通过后，会在 3 个工作日内原路退回。"]},
+    {"key":"rule-failed","response":"退款通常需要 15 个工作日。","reference":"退款会在 3 个工作日内原路退回。","contexts":["退款审核通过后，会在 3 个工作日内原路退回。"]},
+    {"key":"missing-evidence","response":"","reference":"退款会在 3 个工作日内原路退回。","contexts":[]},
+    {"key":"long-identity","response":"已根据订单状态完成退款时效说明。","reference":"已根据订单状态完成退款时效说明。","contexts":["订单、支付渠道和退款状态均已核对。"]}
+  ],
+  "processor-disabled": [
+    {"key":"disabled-one","response":"已有回答，但统计处理器被显式关闭。","reference":"已有回答，但统计处理器被显式关闭。","contexts":[]}
+  ],
+  "processor-replaced": [
+    {"key":"replacement-one","response":"自定义统计会替换默认窗口统计。","reference":"自定义统计会替换默认窗口统计。","contexts":[]},
+    {"key":"replacement-two","response":"第二条样本用于自定义序列。","reference":"第二条样本用于自定义序列。","contexts":[]}
+  ],
+  "judge-unsampled": [
+    {"key":"unsampled-one","response":"确定性指标仍然执行。","reference":"确定性指标仍然执行。","contexts":[]},
+    {"key":"unsampled-two","response":"Judge 没有被采样。","reference":"Judge 没有被采样。","contexts":[]}
+  ],
+  "judge-budget-exhausted": [
+    {"key":"budget-one","response":"第一个 Judge 调用使用预算。","reference":"第一个 Judge 调用使用预算。","contexts":[]},
+    {"key":"budget-two","response":"第二个 Judge 调用超过窗口预算。","reference":"第二个 Judge 调用超过窗口预算。","contexts":[]},
+    {"key":"budget-three","response":"第三个 Judge 调用超过窗口预算。","reference":"第三个 Judge 调用超过窗口预算。","contexts":[]}
+  ],
+  "evaluator-error": [
+    {"key":"error-one","response":"基础指标可用，但扩展 Evaluator 失败。","reference":"基础指标可用，但扩展 Evaluator 失败。","contexts":[]}
+  ]
+}

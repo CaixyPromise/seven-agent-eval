@@ -1,0 +1,5 @@
+schema_version: evaluate.plan/v1
+id: empty-stream
+mode: stream
+stream:
+  unit: trace

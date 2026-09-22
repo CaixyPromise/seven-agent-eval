@@ -1,0 +1,9 @@
+id: browser-fixture
+version: 1.0.0
+metrics:
+  - id: browser.judge
+    name: 浏览器验收 Judge
+    type: boolean
+  - id: browser.error
+    name: 浏览器验收错误
+    type: boolean

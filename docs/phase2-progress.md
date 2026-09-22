@@ -4,7 +4,7 @@
 
 **T05–T06 已完成本机受控范围的实现和验收。** 当前源码通过自动回归、真实 Go server 页面流程、窗口导出与独立重开。验收只证明本机回环 EEP、明确支持的 OTLP JSON 子集和受控事件源，不代表真实 Seven Agent 生产接入或容量 SLA。
 
-普通 Chrome 扩展会话访问 `127.0.0.1:17431` 仍返回 `ERR_BLOCKED_BY_CLIENT`；独立 Playwright Chromium 不受该扩展链路影响，完成了产品流程。200% 场景使用 1536×1024 物理基线对应的 768×512 CSS 布局复核：修复前页面宽度溢出为 883px，修复后 `scrollWidth === clientWidth === 768`。这条外部 Chrome 扩展兼容问题不归因于产品服务。
+普通 Chrome 的旧扩展会话访问 `127.0.0.1:17431` 曾返回 `ERR_BLOCKED_BY_CLIENT`；本轮重新在普通 Chrome 新标签页打开当前服务成功，并用浏览器原生缩放控件实际达到 `Zoom: 200%`，检查后恢复为 `Zoom: 100%`。独立 Playwright Chromium 继续承担确定性业务流程和故障注入。
 
 ## 本轮实现与口径
 
@@ -46,9 +46,27 @@ Go 专项回归另覆盖投影失败、未 ACK 尾记录、暂停中的在途边
 - 独立 Chromium 使用真实构建产物和 Go server 验证 SSE、暂停期间继续接收、恢复清空积压、窗口下钻、打开旧快照后出现新 revision 提示、窗口下载与 CLI 校验。
 - 固定 1536×1024、DPR 1 桌面截图：`output/playwright/phase2-closeout/desktop.png`；Drawer：`drawer.png`；390×844：`mobile-top.png`；200% 等效布局修复后：`zoom-200-layout-fixed.png`。
 - 390×844 下页面壳改为顶部导航，计划选择和控制区换行，KPI 与图表单列，关键操作可达。长样本 ID 在 Drawer 中允许换行，不挤出操作。
-- 键盘焦点顺序覆盖跳转链接、导航、导入、计划、范围、刷新、暂停和窗口详情；Escape 关闭 Drawer。reduced-motion 浏览器上下文返回 true，CSS transition 为 `0s`，ECharts 初始化和更新均读取同一媒体状态。
+- 键盘焦点顺序覆盖跳转链接、导航、导入、计划、范围、刷新、暂停和窗口详情；Escape 关闭 Drawer。reduced-motion 浏览器上下文返回 true；本轮进一步验证图表初始化后画布在 250 ms 内保持一致，切换到空计划后 ECharts 实例从 4 个归零，覆盖初始化、更新稳定和卸载清理。
 - 受控 500/SSE 断线响应含模拟 token、绝对路径和 stack 文本；页面只显示稳定的“实时更新已断开”及重试动作，敏感标记未出现在正文或可访问树。
-- 原型和实现按同一桌面视口复核；实现保留原型的信息优先级，但采用两列图表和更清晰的“图表 + 精确表格”纵向结构。Copy gate 与视觉 Gate 已通过本机受控范围。
+- 原型和实现按 1536×1024、DPR 1 桌面视口复核；原型是静态方向稿，使用了与验收 fixture 不同的示例数值，因此不声明像素级 1:1 或“同数据”。实现保留信息优先级，但采用两列图表和“图表 + 精确表格”纵向结构。Copy gate 与视觉 Gate 已通过本机受控范围。
+
+## 浏览器补充验收（2026-09-22）
+
+新增可重复 fixture：`scripts/browser_fixture.py` 与 `testdata/browser-acceptance/`。`prepare` 可生成无 stream 计划或完整场景 Package，`seed` 使用当前时间附近的确定性事件，覆盖空计划、长 plan/trace/case ID、Processor 关闭/替换、judge 未采样、judge 预算耗尽和 Evaluator 执行错误。fixture 只调用本机 EEP 接口，不调用 Subject。
+
+本轮从当前源码完成以下真实浏览器检查：
+
+- 空计划在 SSE 快照先于初始报告返回时曾持续显示“正在读取窗口”；已修复为收到快照即结束加载，并复测显示“所选时间内还没有事件”。无 stream 计划单独显示“还没有可用的持续评分计划”。
+- Processor 关闭时统计 KPI 为 `—` 且图表明确说明未提供窗口统计；替换计划只消费自定义 Processor 输出。judge 未采样、预算耗尽和 Evaluator 错误在 API/Drawer 中保持不同原因，不转成零分。
+- 详情延迟响应显示局部骨架；受控 404 和导出 503 只显示审核过的中文提示，模拟 token、绝对路径、stack 和上游响应未进入正文；解除拦截后局部“重试”恢复。
+- 延迟第一个详情请求、关闭后切换计划并打开第二个窗口，最终 Drawer 保持 `processor-replaced`，旧响应没有覆盖新选择。
+- revision 13 Drawer 在 revision 42 到达后保留旧快照并提示“已有更新”；在切换前后分别由浏览器导出，两个包内 `run.json` 的窗口 revision 分别为 13 和 42，且 CLI `verify` 均通过。
+- revision 42 包在干净目录、`SEVEN_EVAL_PYTHON=/nonexistent/seven-eval-python` 下启动查看器，页面显示“窗口快照 · 修订 42”、窗口范围、4 条样本、指标汇总、处理器输出/码表/执行配置入口；未启动 Python worker。
+- 普通 Chrome 原生 200% 缩放下，计划、时间范围、刷新/暂停及 KPI 仍可访问；随后恢复 100%。该项取代此前仅用 768×512 CSS 视口模拟真实缩放的记录。
+
+本地证据位于 `output/playwright/phase2-supplement/`：桌面长 ID、无计划、独立查看器截图及 revision 13/42 结果包。目录继续忽略，不提交可重建二进制。
+
+补充提交前从最终源码重新执行：`make test`、`go vet ./...`、`python3 scripts/acceptance.py`、`make acceptance-live`、两个浏览器导出包的 `seven-eval verify` 以及 `git diff --check`，退出码均为 0。`make test` 包含 Go race、8 项前端领域测试、10 项 Python SDK 测试和前端生产构建；`make acceptance-live` 重新构建 CLI，并再次通过 ACK/SIGKILL/重启、顺序与预算、revision 替换、exporter 断线恢复、在线/离线精确重算、结果包完整性和无 Python 查看器检查。Vite 的大 chunk 警告仍是已知非阻断风险。
 
 仍属于后续范围：真实 Seven Agent 生产来源（T07/T14）、容量与保留故障矩阵（T12）、跨机器安装发行（T13）。OTLP 只支持 JSON：OpenInference root／AGENT／CHAIN，RETRIEVER 上下文，LLM token 属性，trace/resource-level turn ID，以及 quiet period、timeout 和 revision；不支持 protobuf 或任意跨 turn span 图。
 

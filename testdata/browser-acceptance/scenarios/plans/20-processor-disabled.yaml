@@ -1,0 +1,6 @@
+schema_version: evaluate.plan/v1
+id: processor-disabled
+mode: stream
+processors: []
+stream:
+  unit: trace
