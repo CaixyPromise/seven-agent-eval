@@ -332,6 +332,9 @@ func Resolve(root string, d Discovery, id string) (Effective, error) {
 			if seen[v.ID] {
 				return out, errors.New("duplicate stage reference")
 			}
+			if out.Plan.Mode == "stream" && kind == "evaluator" && v.Descriptor["execution_class"] == "judge" && (out.Plan.Stream.JudgeSampleRate == nil || out.Plan.Stream.JudgePerWindowBudget == nil) {
+				return out, errors.New("judge evaluator requires explicit sampling and window budget")
+			}
 			seen[v.ID] = true
 		}
 	}

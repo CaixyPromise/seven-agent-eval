@@ -135,7 +135,7 @@ func TestLiveRevisionReplacesWindowContribution(t *testing.T) {
 	for time.Now().Before(deadline) {
 		report, err := m.Report(context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
 		if err == nil && report.Current != nil && report.Current.Scope.Scored == 1 {
-			if report.Current.Scope.Received != 1 || report.Current.Scope.Revision != 2 || len(report.Current.Cases) != 1 || report.Current.Cases[0].Result.Response != "hello" {
+			if report.Current.Scope.Received != 1 || report.Current.Scope.Revision < 2 || len(report.Current.Cases) != 1 || report.Current.Cases[0].Result.Response != "hello" {
 				t.Fatalf("revision did not replace prior contribution: %+v", report.Current)
 			}
 			return

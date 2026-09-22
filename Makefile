@@ -1,4 +1,4 @@
-.PHONY: setup build test demo
+.PHONY: setup build test demo acceptance-live
 setup:
 	uv sync --locked --project sdk/python --python 3.11
 	pnpm --dir web install --frozen-lockfile
@@ -12,3 +12,5 @@ test:
 	pnpm --dir web build
 demo: build
 	./bin/seven-eval --package examples/history run smoke
+acceptance-live: build
+	uv run --project sdk/python python scripts/live_acceptance.py

@@ -459,6 +459,15 @@
     "window_scope": {
       "type": "object",
       "properties": {
+        "statistics_available": {"type":"boolean"},
+        "skipped": {"type":"integer","minimum":0},
+        "budget_exhausted": {"type":"integer","minimum":0},
+        "unscored": {"type":"integer","minimum":0},
+        "facts": {"type":"array","items":{"type":"object"}},
+        "backlog_facts": {"type":"array","items":{"type":"object"}},
+        "coverage": {"type":"number","minimum":0,"maximum":1},
+        "reasons": {"type":"object","additionalProperties":{"type":"integer","minimum":0}},
+        "anomalies": {"type":"integer","minimum":0},
         "kind": { "const": "window" }, "plan_id": { "type": "string" }, "source": { "type": "string" },
         "start": { "type": "string", "format": "date-time" }, "end": { "type": "string", "format": "date-time" },
         "watermark": { "type": "string", "format": "date-time" }, "revision": { "type": "integer", "minimum": 1 },

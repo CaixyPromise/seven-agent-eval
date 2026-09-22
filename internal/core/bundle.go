@@ -28,6 +28,7 @@ type Manifest struct {
 const reportTemplate = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Seven Eval · {{.ID}}</title><style>body{font:16px/1.65 Georgia,serif;color:#173c34;background:#f6f5ef;max-width:1100px;margin:45px auto;padding:20px}h1{font-size:38px}small{color:#65756f}table{width:100%;border-collapse:collapse;background:white}td,th{text-align:left;border-bottom:1px solid #ddd;padding:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#e9eee8;padding:15px}section{margin:32px 0}.tag{background:#dfece2;padding:6px 12px}summary{cursor:pointer}a{color:#196849}</style>
 <small>SEVEN / EVALUATION REPORT</small><h1>{{.Package.Name}}</h1><p><span class="tag">{{.Status}}</span> {{.Completed}} / {{.Total}} processed · {{.CreatedAt}}</p>
+{{with .Scope}}<section><h2>Window / 窗口快照</h2><p>{{.PlanID}} · {{.Start}} — {{.End}} · {{.State}} · 修订 {{.Revision}}</p><p>评分延迟：从接收证据到完成评分计算，包含排队；不等于业务调用耗时。</p></section>{{end}}
 <p>{{.Message}}</p><p>Basic checks describe verified rules, not overall business correctness.</p>
 <section><h2>Conclusions / 结论</h2>{{range .Conclusions}}<p><strong>{{.Code}}</strong> — {{.Summary}}</p>{{else}}<p>Conclusions disabled or unavailable.</p>{{end}}</section>
 <section><h2>Statistics / 统计</h2>{{range .Outputs}}<h3>{{.Processor}}</h3><pre>{{pretty .Data}}</pre>{{else}}<p>Processors disabled or unavailable.</p>{{end}}</section>

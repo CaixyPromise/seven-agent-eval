@@ -35,6 +35,7 @@ export type RunSummary = {
   total: number;
 };
 export type Run = RunSummary & {
+  scope?: WindowScope;
   cases: CaseResult[];
   outputs: { processor: string; data: Record<string, unknown> }[];
   conclusions: { code: string; level: string; summary: string }[];
@@ -68,6 +69,13 @@ export type LivePlan = {
 };
 
 export type WindowScope = {
+  statistics_available?: boolean;
+  coverage?: number;
+  reasons?: Record<string, number>;
+  anomalies?: number;
+  skipped?: number;
+  budget_exhausted?: number;
+  unscored?: number;
   kind: "window";
   plan_id: string;
   start: string;
@@ -91,6 +99,7 @@ export type WindowScope = {
 export type LiveWindow = Run & { scope: WindowScope };
 
 export type LivePoint = {
+  unscored?: number;
   time: string;
   coverage?: number;
   received: number;
@@ -103,6 +112,8 @@ export type LivePoint = {
 };
 
 export type LiveReport = {
+  summary?: WindowScope;
+  backlog_series?: { time: string; pending: number }[];
   plan: LivePlan;
   from: string;
   to: string;

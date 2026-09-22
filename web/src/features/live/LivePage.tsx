@@ -56,10 +56,12 @@ export default function LivePage() {
   const [drawerError, setDrawerError] = useState<ErrorCode | null>(null);
   const [exporting, setExporting] = useState(false);
   const requestVersion = useRef(0);
+  const drawerVersion = useRef(0);
 
   const reloadPlans = useCallback(async () => {
     try {
       const next = await evaluationApi.livePlans();
+      setError(null);
       setPlans(next);
       setPlanID((current) =>
         current && next.some((plan) => plan.id === current) ? current : next[0]?.id,
@@ -93,7 +95,10 @@ export default function LivePage() {
     void reloadPlans().finally(() => setLoading(false));
   }, [reloadPlans]);
   useEffect(() => {
+    setReport(undefined);
+    setLoading(true);
     void reloadReport();
+    return () => { requestVersion.current++; };
   }, [reloadReport]);
   useEffect(() => {
     if (!planID) return;
@@ -104,6 +109,7 @@ export default function LivePage() {
     stream.addEventListener("snapshot", (event) => {
       if (cancelled) return;
       try {
+        requestVersion.current++;
         setReport(JSON.parse((event as MessageEvent<string>).data) as LiveReport);
         setError(null);
       } catch {
@@ -119,21 +125,22 @@ export default function LivePage() {
     };
   }, [planID, range]);
 
-  const selectedPlan = report?.plan ?? plans?.find((plan) => plan.id === planID);
-  const current = report?.current;
-  const coverage = current?.scope.eligible
-    ? current.scope.scored / current.scope.eligible
-    : undefined;
+  const selectedPlan = report && report.plan.id === planID ? report.plan : plans?.find((plan) => plan.id === planID);
+  const current = report && report.plan.id === planID && report.summary ? { scope: report.summary } : undefined;
+  const coverage = current?.scope.coverage;
   const openWindow = useCallback(async (id: string) => {
+    const version = ++drawerVersion.current;
     setDrawerID(id);
+    setDrawerWindow(undefined);
     setDrawerLoading(true);
     setDrawerError(null);
     try {
-      setDrawerWindow(await evaluationApi.liveWindow(id));
+      const next = await evaluationApi.liveWindow(id);
+      if (version === drawerVersion.current) setDrawerWindow(next);
     } catch (cause) {
-      setDrawerError(safeErrorCode(cause, "WINDOW_NOT_FOUND"));
+      if (version === drawerVersion.current) setDrawerError(safeErrorCode(cause, "WINDOW_NOT_FOUND"));
     } finally {
-      setDrawerLoading(false);
+      if (version === drawerVersion.current) setDrawerLoading(false);
     }
   }, []);
   const control = async () => {
@@ -162,6 +169,11 @@ export default function LivePage() {
       setExporting(false);
     }
   };
+  const openPoint = (index: number) => {
+    const point = report?.series[index];
+    const window = report?.windows.find((window) => window.scope.start === point?.time);
+    if (window) void openWindow(window.id);
+  };
 
   const timeAxis = useMemo(
     () => report?.series.map((point) => formatDate(point.time)) ?? [],
@@ -184,6 +196,7 @@ export default function LivePage() {
       yAxis: { type: "value" },
       series: [
         { type: "bar", stack: "count", name: "已评分", data: report?.series.map((point) => point.scored) ?? [], itemStyle: { color: "#1677ff" } },
+        { type: "bar", stack: "count", name: "无有效评分", data: report?.series.map((point) => point.unscored ?? 0) ?? [], itemStyle: { color: "#bfbfbf" } },
         { type: "bar", stack: "count", name: "证据不足", data: report?.series.map((point) => point.not_computable) ?? [], itemStyle: { color: "#faad14" } },
         { type: "bar", stack: "count", name: "失败", data: report?.series.map((point) => point.failed) ?? [], itemStyle: { color: "#ff4d4f" } },
         { type: "bar", stack: "count", name: "待处理", data: report?.series.map((point) => point.pending) ?? [], itemStyle: { color: "#91a5c7" } },
@@ -207,19 +220,19 @@ export default function LivePage() {
   const backlogOption = useMemo(
     () => ({
       ...chartBase,
-      xAxis: { type: "category", data: timeAxis, boundaryGap: false },
+      xAxis: { type: "category", data: report?.backlog_series?.map((point) => formatDate(point.time)) ?? [], boundaryGap: false },
       yAxis: { type: "value", minInterval: 1 },
-      series: [{ type: "line", smooth: true, name: "待处理", data: report?.series.map((point) => point.pending) ?? [], itemStyle: { color: "#7b61ff" }, areaStyle: { color: "rgba(123,97,255,.10)" } }],
+      series: [{ type: "line", step: "end", name: "待处理", data: report?.backlog_series?.map((point) => point.pending) ?? [], itemStyle: { color: "#7b61ff" }, areaStyle: { color: "rgba(123,97,255,.10)" } }],
     }),
     [report, timeAxis],
   );
   const windowColumns: ColumnsType<LiveWindow> = [
     { title: "时间窗口", dataIndex: ["scope", "start"], render: (value: string, row) => <Button type="link" className="identity-button" onClick={() => void openWindow(row.id)}>{formatDate(value)}<span className="secondary-id">修订 {row.scope.revision}</span></Button> },
     { title: "状态", dataIndex: ["scope", "state"], render: (value: string) => <StatusBadge status={value} /> },
-    { title: "接收 / 评分", render: (_, row) => `${row.scope.received} / ${row.scope.scored}` },
-    { title: "覆盖率", render: (_, row) => percent(row.scope.eligible ? row.scope.scored / row.scope.eligible : undefined) },
+    { title: "接收 / 评分", render: (_, row) => `${row.scope.received} / ${row.scope.statistics_available ? row.scope.scored : "—"}` },
+    { title: "覆盖率", render: (_, row) => percent(row.scope.coverage) },
     { title: "p95 延迟", dataIndex: ["scope", "p95_latency_ms"], render: latency },
-    { title: "异常", render: (_, row) => row.scope.failed + row.scope.not_computable ? <Tag color="gold">{row.scope.failed + row.scope.not_computable}</Tag> : "—" },
+    { title: "异常", render: (_, row) => row.scope.anomalies ? <Tag color="gold">{row.scope.anomalies}</Tag> : "—" },
     { title: "操作", render: (_, row) => <Button type="link" icon={<Download size={15} />} onClick={() => void openWindow(row.id)}>查看 / 导出</Button> },
   ];
 
@@ -230,7 +243,7 @@ export default function LivePage() {
         <div>
           <span className="eyebrow"><Activity size={15} /> CONTINUOUS EVALUATION</span>
           <h1>持续评分</h1>
-          <p>只观察已完成请求，不会重放业务调用；窗口数据会在水位线前接受迟到证据修订。</p>
+          <p>按请求发生时间查看评分结果；迟到证据会生成新的窗口修订。</p>
         </div>
         <div className="heading-actions live-actions">
           <Select aria-label="持续评分计划" value={planID} onChange={setPlanID} loading={!plans} options={plans?.map((plan) => ({ value: plan.id, label: `${plan.name} · ${plan.unit}` }))} />
@@ -244,25 +257,26 @@ export default function LivePage() {
         {selectedPlan?.paused ? <Alert className="live-paused" type="warning" showIcon title="评分已暂停，接收与持久化仍在继续" description="恢复后会按照接收顺序消化当前积压。" /> : null}
         <div className="live-kpis">
           <Card className="summary-card"><Statistic title="接收量" value={current?.scope.received ?? 0} /></Card>
-          <Card className="summary-card"><Statistic title="已评分量" value={current?.scope.scored ?? 0} /></Card>
-          <Card className="summary-card" title={<span className="stat-label">评分覆盖率 <Tooltip title="覆盖率表示进入有效评分的请求比例，不是业务正确率。"><Info size={14} /></Tooltip></span>}><Statistic value={coverage == null ? "—" : coverage * 100} precision={coverage == null ? undefined : 1} suffix={coverage == null ? undefined : "%"} /></Card>
+          <Card className="summary-card"><Statistic title="已评分量" value={current?.scope.statistics_available ? current.scope.scored : "—"} /></Card>
+          <Card className="summary-card"><Statistic title={<span className="stat-label">评分覆盖率 <Tooltip title="覆盖率表示有有效评分且未执行失败的请求比例，不是业务正确率。"><Info size={14} /></Tooltip></span>} value={coverage == null ? "—" : coverage * 100} precision={coverage == null ? undefined : 1} suffix={coverage == null ? undefined : "%"} /></Card>
           <Card className="summary-card warning-value"><Statistic title="待处理量" value={selectedPlan?.pending ?? 0} /></Card>
-          <Card className="summary-card"><Statistic title="p95 评分延迟" value={current?.scope.p95_latency_ms ?? 0} suffix="ms" /></Card>
+          <Card className="summary-card"><Statistic title={<Tooltip title="从本机接收证据到完成评分计算的耗时，包含排队等待，不等于业务调用耗时。">p95 评分延迟</Tooltip>} value={current?.scope.p95_latency_ms == null ? "—" : Math.round(current.scope.p95_latency_ms)} suffix={current?.scope.p95_latency_ms == null ? undefined : "ms"} /></Card>
         </div>
-        {!report?.series.length ? <EmptyState title="等待第一批生产事件" description="事件在接收并持久化后会出现在这里。当前页面每 5 秒刷新，结果不会触发业务请求。" /> : <>
+        {!report?.windows.length ? <EmptyState title={loading ? "正在读取窗口" : "所选时间内还没有事件"} description="可以调整时间范围，或等待已完成的请求上报。" /> : <>
+          {!report.series.length ? <Alert type="info" title="当前处理器未提供窗口统计" description="可以查看已接收样本并导出窗口，评分统计暂不可用。" /> :
           <div className="live-chart-grid">
-            <Card title="评分覆盖率趋势" extra={<span className="muted">按事件时间</span>}><LiveChart ariaLabel="评分覆盖率趋势图" option={coverageOption} onPoint={(index) => { const window = report.windows[index]; if (window) void openWindow(window.id); }} /></Card>
-            <Card title="窗口分布" extra={<span className="muted">状态计数</span>}><LiveChart ariaLabel="已评分、证据不足、失败和待处理的窗口分布图" option={distributionOption} onPoint={(index) => { const window = report.windows[index]; if (window) void openWindow(window.id); }} /></Card>
-            <Card title="评分延迟" extra={<span className="muted">p50 / p95</span>}><LiveChart ariaLabel="评分延迟趋势图" option={latencyOption} onPoint={(index) => { const window = report.windows[index]; if (window) void openWindow(window.id); }} /></Card>
-            <Card title="积压趋势" extra={<span className="muted">等待评分</span>}><LiveChart ariaLabel="待处理积压趋势图" option={backlogOption} onPoint={(index) => { const window = report.windows[index]; if (window) void openWindow(window.id); }} /></Card>
-          </div>
+            <Card title="评分覆盖率趋势" extra={<span className="muted">按事件时间</span>}><LiveChart ariaLabel="评分覆盖率趋势图" option={coverageOption} onPoint={openPoint} /></Card>
+            <Card title="窗口分布" extra={<span className="muted">状态计数</span>}><LiveChart ariaLabel="已评分、证据不足、失败、无有效评分和待处理的窗口分布图" option={distributionOption} onPoint={openPoint} /></Card>
+            <Card title="评分延迟" extra={<span className="muted">p50 / p95</span>}><LiveChart ariaLabel="评分延迟趋势图" option={latencyOption} onPoint={openPoint} /></Card>
+            <Card title="积压趋势" extra={<span className="muted">所选请求 · 按接收时间</span>}><LiveChart ariaLabel="所选请求的待处理量随接收和评分完成时间的变化" option={backlogOption} /></Card>
+          </div>}
           <section className="panel live-window-panel">
-            <div className="panel-toolbar"><h2>精确窗口数据 <span className="count">{report.windows.length}</span></h2><span className="muted">图表的数据表与无障碍替代；点击一行查看证据、原因与版本。</span></div>
+            <div className="panel-toolbar"><h2>窗口明细 <span className="count">{report.windows.length}</span></h2></div>
             <Table className="domain-table" rowKey="id" columns={windowColumns} dataSource={report.windows} pagination={false} scroll={{ x: 840 }} />
           </section>
         </>}
       </>}
-      <WindowDrawer open={!!drawerID} window={drawerWindow} loading={drawerLoading} error={drawerError} exporting={exporting} onClose={() => { setDrawerID(undefined); setDrawerWindow(undefined); }} onExport={() => void exportWindow()} />
+      <WindowDrawer open={!!drawerID} window={drawerWindow} latest={report?.windows.find((w) => w.scope.start === drawerWindow?.scope.start)} loading={drawerLoading} error={drawerError} exporting={exporting} onRetry={() => { if (drawerID) void openWindow(drawerID); }} onRefresh={(id) => void openWindow(id)} onClose={() => { drawerVersion.current++; setDrawerID(undefined); setDrawerWindow(undefined); }} onExport={() => void exportWindow()} />
     </>
   );
 }

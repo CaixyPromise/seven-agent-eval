@@ -154,9 +154,34 @@ func (e *Engine) EvaluateExisting(ctx context.Context, r *Run, c Case, result Su
 		cr.Evidence = append(cr.Evidence, Evidence{ID: c.ID + ":contexts", Kind: "retrieval", Value: result.Contexts})
 	}
 	subjectStatus, subjectReason := cr.Status, cr.Reason
+	if c.Metadata["seven_eval_evidence_state"] == "incomplete" {
+		subjectStatus, subjectReason = "incomplete", "evidence_missing"
+	}
 	for _, ref := range r.Effective.Evaluators {
+		decisions, _ := ctx.Value(liveDecisionKey{}).(map[string]string)
+		if decisions[ref] == "interrupted" {
+			cr.Status, cr.Reason = "error", "evaluation_interrupted"
+			cr.Metrics = append(cr.Metrics, Metric{ID: c.ID + ":" + ref + ":interrupted", CaseID: c.ID, MetricID: "evaluation.error", Status: "error", Reason: "evaluation_interrupted", Evaluator: ref, Value: nil})
+			continue
+		}
+		if decision := decisions[ref]; decision == "skipped" || decision == "budget_exhausted" {
+			reason := "not_sampled"
+			if decision == "budget_exhausted" {
+				reason = "judge_budget_exhausted"
+			}
+			cr.Metrics = append(cr.Metrics, Metric{ID: c.ID + ":" + ref + ":policy", CaseID: c.ID, MetricID: "evaluation.policy", Status: decision, Reason: reason, Evaluator: ref, Value: nil})
+			continue
+		}
 		var ms []Metric
-		err := e.extension(ctx, r, ref, "evaluator", "evaluator/evaluate", map[string]any{"case": c, "result": result, "status": subjectStatus, "reason": subjectReason}, &ms)
+		extensionContext := map[string]any{"case": c, "result": result, "status": subjectStatus, "reason": subjectReason}
+		if identity := ctx.Value(liveIdentityKey{}); identity != nil {
+			for _, asset := range r.Effective.Assets {
+				if "evaluator:"+asset.ID == ref {
+					extensionContext["idempotency_key"] = Digest([]any{identity, ref, asset.Version, asset.Descriptor})
+				}
+			}
+		}
+		err := e.extension(ctx, r, ref, "evaluator", "evaluator/evaluate", extensionContext, &ms)
 		if err == nil {
 			for _, m := range ms {
 				if err = protocol.Validate("metric", m); err != nil {
@@ -176,7 +201,10 @@ func (e *Engine) EvaluateExisting(ctx context.Context, r *Run, c Case, result Su
 	}
 	before := Digest(cr)
 	if b, err := json.Marshal(e.redactForRun(r, cr)); err == nil {
-		_ = decodeJSON(b, &cr)
+		var redacted CaseResult
+		if decodeJSON(b, &redacted) == nil {
+			cr = redacted
+		}
 	}
 	cr.RedactionApplied = before != Digest(cr)
 	return cr, nil
@@ -187,9 +215,12 @@ func (e *Engine) EvaluateExisting(ctx context.Context, r *Run, c Case, result Su
 func (e *Engine) ProcessExisting(ctx context.Context, r *Run) error {
 	r.Outputs, r.Conclusions = []ProcessorOutput{}, []Conclusion{}
 	inputDigest := Digest(r.Cases)
+	if r.Scope != nil {
+		inputDigest = Digest(map[string]any{"cases": r.Cases, "start": r.Scope.Start, "end": r.Scope.End, "facts": r.Scope.Facts, "backlog_facts": r.Scope.BacklogFacts})
+	}
 	for _, ref := range r.Effective.Processors {
 		var output ProcessorOutput
-		err := e.extension(ctx, r, ref, "processor", "processor/process", map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest}, &output)
+		err := e.extension(ctx, r, ref, "processor", "processor/process", map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "window": r.Scope}, &output)
 		if err == nil {
 			err = protocol.Validate("processor_output", output)
 		}

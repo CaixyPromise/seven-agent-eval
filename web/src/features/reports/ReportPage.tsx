@@ -122,6 +122,7 @@ export default function ReportPage({
               </Button>
             </div>
           </header>
+          {run.scope ? <Alert type="info" showIcon title={`窗口快照 · 修订 ${run.scope.revision}`} description={`${run.scope.plan_id} · ${formatDate(run.scope.start)} — ${formatDate(run.scope.end)} · ${run.scope.state === "final" ? "已结束" : "统计中（部分结果）"}`} /> : null}
           {actionError ? (
             <ErrorNotice
               code={actionError}

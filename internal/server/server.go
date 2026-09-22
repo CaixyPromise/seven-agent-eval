@@ -215,14 +215,20 @@ func (s *Server) liveUnavailable(w http.ResponseWriter) bool {
 	return true
 }
 func liveCode(err error) (string, int) {
+	var planErr *core.PlanError
+	if errors.As(err, &planErr) {
+		return "LIVE_PLAN_INVALID", http.StatusBadRequest
+	}
 	switch err.Error() {
 	case "plan is not a stream":
 		return "LIVE_PLAN_INVALID", http.StatusBadRequest
 	case "ingest batch too large":
 		return "INGEST_BATCH_TOO_LARGE", http.StatusRequestEntityTooLarge
+	case "ingest queue full":
+		return "QUEUE_FULL", http.StatusTooManyRequests
 	case "window not found":
 		return "WINDOW_NOT_FOUND", http.StatusNotFound
-	case "OTLP plan mapping missing", "OTLP root mapping missing", "OTLP contains no mappable trace", "event does not contain the plan evaluation unit":
+	case "OTLP plan mapping missing", "OTLP turn mapping missing", "OTLP root mapping missing", "OTLP contains no mappable trace", "event does not contain the plan evaluation unit":
 		return "OTLP_MAPPING_REQUIRED", http.StatusBadRequest
 	case "OTLP batch contains multiple plans":
 		return "OTLP_PLAN_CONFLICT", http.StatusBadRequest
@@ -334,7 +340,7 @@ func (s *Server) liveEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	previous := ""
 	for {
@@ -393,12 +399,7 @@ func (s *Server) ingestOTLP(w http.ResponseWriter, r *http.Request) {
 		failureCode(w, "INGEST_BATCH_TOO_LARGE", 413)
 		return
 	}
-	batch, err := core.MapOTLPJSON(body)
-	if err != nil {
-		liveFailure(w, err)
-		return
-	}
-	result, err := s.Live.Ingest(r.Context(), batch)
+	result, err := s.Live.IngestOTLP(r.Context(), body)
 	if err != nil {
 		liveFailure(w, err)
 		return

@@ -579,7 +579,8 @@ pre {
     align-items: flex-start;
   }
 }
-@media (max-width: 760px) {
+/* 820px also covers a 1536px desktop viewport at 200% browser zoom. */
+@media (max-width: 820px) {
   .sidebar {
     position: static;
     width: 100%;

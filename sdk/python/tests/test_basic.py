@@ -6,6 +6,21 @@ from seven_evaluate import basic
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 class ContractTests(unittest.TestCase):
+    def test_window_partition_delay_and_backlog(self):
+        def item(cid, metrics, status='completed'):
+            return {'case': {'id': cid}, 'metrics': metrics, 'status': status}
+        facts = [{'case_id': str(i), 'received_at': f'2026-09-05T10:00:0{i}Z',
+                  **({'scored_at': '2026-09-05T10:00:08Z'} if i < 4 else {})} for i in range(5)]
+        cases = [item('0', [basic.metric('0', 'output.present', 'observed', False)]),
+                 item('1', [basic.metric('1', 'output.present', 'not_computable', reason='evidence_missing')]),
+                 item('2', [basic.metric('2', 'evaluation.policy', 'skipped', reason='not_sampled')]),
+                 item('3', [basic.metric('3', 'evaluation.error', 'error', reason='evaluator_error')], 'error')]
+        out = basic.process_window({'cases': cases, 'window': {'start':'2026-09-05T10:00:00Z','facts': facts}})
+        self.assertEqual([out[k] for k in ['scored','failed','not_computable','unscored','pending']], [1,1,1,1,1])
+        self.assertEqual(out['coverage'], .2)
+        self.assertEqual(out['p95_latency_ms'], 8000)
+        self.assertEqual(out['backlog_series'][-1]['pending'], 1)
+        self.assertEqual(out['skipped'], 1)
     def test_three_ingress_shapes(self):
         examples = ROOT / "protocol/examples"
         active = json.loads((examples/"active.json").read_text())["value"]

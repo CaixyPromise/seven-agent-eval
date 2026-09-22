@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -190,7 +191,7 @@ func TestLiveIngestPauseOTLPAndWindowExport(t *testing.T) {
 		t.Fatalf("plans: %v %v", response.Status, err)
 	}
 	response.Body.Close()
-	batch := `{"plan_id":"production","events":[{"schema_version":"evaluate.event/v1","source":"test","project":"demo","event_id":"one","event_time":"2026-09-05T07:52:10Z","trace_id":"trace-one","evidence_revision":1,"case":{"id":"one","inputs":{"question":"hello"},"references":{"exact":"hello"}},"result":{"response":"hello","latency_ms":12}}]}`
+	batch := fmt.Sprintf(`{"plan_id":"production","events":[{"schema_version":"evaluate.event/v1","source":"test","project":"demo","event_id":"one","event_time":%q,"trace_id":"trace-one","evidence_revision":1,"case":{"id":"one","inputs":{"question":"hello"},"references":{"exact":"hello"}},"result":{"response":"hello","latency_ms":12}}]}`, time.Now().UTC().Format(time.RFC3339Nano))
 	response, err = http.Post(target.URL+"/api/ingest/events", "application/json", strings.NewReader(batch))
 	if err != nil || response.StatusCode != http.StatusAccepted {
 		t.Fatalf("ingest: %v %v", response.Status, err)

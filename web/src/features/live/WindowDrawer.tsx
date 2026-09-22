@@ -8,7 +8,7 @@ import Tag from "antd/es/tag";
 import type { ErrorCode } from "../../api/errors";
 import { ErrorNotice, LoadingState } from "../../components/Feedback";
 import { StatusBadge } from "../../components/StatusBadge";
-import { formatDate, isAnomaly, pretty } from "../../domain/presentation";
+import { formatDate, isAnomaly, pretty, reasonNames } from "../../domain/presentation";
 import type { LiveWindow } from "../../domain/types";
 
 export function WindowDrawer({
@@ -19,6 +19,9 @@ export function WindowDrawer({
   exporting,
   onClose,
   onExport,
+  onRetry,
+  onRefresh,
+  latest,
 }: {
   open: boolean;
   window?: LiveWindow;
@@ -27,6 +30,9 @@ export function WindowDrawer({
   exporting: boolean;
   onClose: () => void;
   onExport: () => void;
+  onRetry: () => void;
+  onRefresh: (id: string) => void;
+  latest?: LiveWindow;
 }) {
   const scope = window?.scope;
   const anomalies = window?.cases.filter(isAnomaly) ?? [];
@@ -45,27 +51,34 @@ export function WindowDrawer({
       }
     >
       {loading ? <LoadingState label="正在读取窗口详情" /> : null}
-      {error ? <ErrorNotice code={error} /> : null}
+      {error ? <ErrorNotice code={error} onRetry={error === "WINDOW_EXPORT_UNAVAILABLE" ? onExport : onRetry} /> : null}
       {window && scope ? (
         <div className="drawer-body live-drawer">
+          {latest && latest.id !== window.id ? <Alert type="info" title={`已有更新：修订 ${latest.scope.revision}`} action={<Button onClick={() => onRefresh(latest.id)}>查看最新</Button>} /> : null}
           <Alert
             type={scope.state === "final" ? "success" : "info"}
             showIcon
-            title={scope.state === "final" ? "窗口已封板" : "窗口仍可能因迟到证据修订"}
+            title={scope.state === "final" ? "窗口已结束，迟到证据仍可修订" : "窗口统计中"}
             description={`水位线：${formatDate(scope.watermark)} · 修订 ${scope.revision}`}
           />
           <Descriptions column={2} size="small" title="计数漏斗">
             <Descriptions.Item label="接收">{scope.received}</Descriptions.Item>
             <Descriptions.Item label="合格">{scope.eligible}</Descriptions.Item>
-            <Descriptions.Item label="选中">{scope.sampled}</Descriptions.Item>
-            <Descriptions.Item label="已评分">{scope.scored}</Descriptions.Item>
-            <Descriptions.Item label="证据不足">{scope.not_computable}</Descriptions.Item>
-            <Descriptions.Item label="执行失败">{scope.failed}</Descriptions.Item>
+            <Descriptions.Item label="已执行评测">{scope.statistics_available ? scope.sampled : "—"}</Descriptions.Item>
+            <Descriptions.Item label="已评分">{scope.statistics_available ? scope.scored : "—"}</Descriptions.Item>
+            <Descriptions.Item label="证据不足">{scope.statistics_available ? scope.not_computable : "—"}</Descriptions.Item>
+            <Descriptions.Item label="执行失败">{scope.statistics_available ? scope.failed : "—"}</Descriptions.Item>
+            <Descriptions.Item label="涉及未采样">{scope.statistics_available ? scope.skipped : "—"}</Descriptions.Item>
+            <Descriptions.Item label="涉及预算耗尽">{scope.statistics_available ? scope.budget_exhausted : "—"}</Descriptions.Item>
             <Descriptions.Item label="待处理">{scope.pending}</Descriptions.Item>
             <Descriptions.Item label="p95 评分延迟">
               {scope.p95_latency_ms == null ? "—" : `${scope.p95_latency_ms.toFixed(0)} ms`}
             </Descriptions.Item>
           </Descriptions>
+          <section>
+            <h3>指标原因分布</h3>
+            <List size="small" locale={{ emptyText: scope.statistics_available ? "没有已记录的指标原因" : "原因统计不可用" }} dataSource={Object.entries(scope.reasons ?? {})} renderItem={([code, count]) => <List.Item><span>{reasonNames[code] ?? "未分类原因"}</span><Tag>{count}</Tag></List.Item>} />
+          </section>
           <section>
             <h3>结论</h3>
             {window.conclusions.length ? (
@@ -105,7 +118,11 @@ export function WindowDrawer({
           </section>
           <section>
             <h3>版本与范围</h3>
-            <pre>{pretty({ scope, effective: window.effective })}</pre>
+            <Descriptions column={1} size="small">
+              <Descriptions.Item label="计划">{scope.plan_id}</Descriptions.Item>
+              <Descriptions.Item label="窗口结束">{formatDate(scope.end)}</Descriptions.Item>
+              <Descriptions.Item label="快照版本">{scope.revision}</Descriptions.Item>
+            </Descriptions>
           </section>
         </div>
       ) : null}

@@ -28,22 +28,32 @@ export function LiveChart({
   onPoint?: (index: number) => void;
 }) {
   const node = useRef<HTMLDivElement>(null);
+  const instance = useRef<echarts.EChartsType | null>(null);
+  const clickHandler = useRef(onPoint);
+  clickHandler.current = onPoint;
   useEffect(() => {
     if (!node.current) return;
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const chart = echarts.init(node.current, undefined, { renderer: "canvas" });
-    chart.setOption({ ...option, animation: !reduceMotion });
+    instance.current = chart;
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const motion = () => chart.setOption({ animation: !preference.matches });
+    preference.addEventListener("change", motion);
     const resize = new ResizeObserver(() => chart.resize());
     resize.observe(node.current);
     const click = (event: { dataIndex?: number }) => {
-      if (typeof event.dataIndex === "number") onPoint?.(event.dataIndex);
+      if (typeof event.dataIndex === "number") clickHandler.current?.(event.dataIndex);
     };
     chart.on("click", click);
     return () => {
       resize.disconnect();
+      preference.removeEventListener("change", motion);
       chart.off("click", click);
       chart.dispose();
+      instance.current = null;
     };
-  }, [onPoint, option]);
+  }, []);
+  useEffect(() => {
+    instance.current?.setOption({ ...option, animation: !window.matchMedia("(prefers-reduced-motion: reduce)").matches }, { notMerge: true });
+  }, [option]);
   return <div className="live-chart" role="img" aria-label={ariaLabel} ref={node} />;
 }

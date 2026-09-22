@@ -3,10 +3,12 @@ from collections import Counter, defaultdict
 import json
 import math
 import statistics
+from datetime import datetime
 from jsonschema import Draft202012Validator, exceptions
 
 CATALOG = {
     "metrics": [
+        {"id": "evaluation.policy", "name": "评分策略", "type": "json"},
         {"id": "output.present", "name": "输出存在", "type": "boolean", "description": "响应非空；不代表业务正确"},
         {"id": "evaluation.error", "name": "评测异常", "type": "json", "description": "扩展执行或结果契约错误"},
         {"id": "output.schema", "name": "格式约束", "type": "boolean", "description": "用户声明的 JSON Schema"},
@@ -21,6 +23,8 @@ CATALOG = {
             ("usage_missing", "未提供可用用量"), ("subject_error", "目标调用失败"),
             ("evaluator_error", "评测过程失败"), ("insufficient_evidence", "证据不足以判定任务质量"),
             ("dependency_missing", "结论需要的统计输出不可用"), ("cancelled", "用户取消或运行中断"),
+            ("not_sampled", "未被采样选中"), ("judge_budget_exhausted", "窗口评测预算已用完"),
+            ("evaluation_interrupted", "评分中断，未重试结果不确定的评测调用"),
         ]
     ],
     "conclusions": [
@@ -123,14 +127,52 @@ def process(ctx):
     scored = sum(any(m["status"] == "observed" for m in c["metrics"]) for c in cases)
     failure_ids = [c["case"]["id"] for c in cases if c["status"] != "completed" or
                    any(m["status"] == "observed" and m["value"] is False for m in c["metrics"])]
+    window_stats = process_window(ctx) if ctx.get("window") else None
+    if window_stats is not None:
+        scored = window_stats['scored']
     return {"processor": "builtin.basic-summary@1",
             "data": {"total": ctx["total"], "processed": len(cases), "scored": scored,
+                     **({"window": window_stats} if window_stats is not None else {}),
                      "pending": max(0, ctx["total"]-len(cases)),
                      "coverage": scored/ctx["total"] if ctx["total"] else None,
                      "case_statuses": dict(Counter(c["status"] for c in cases)),
                      "series": series, "failure_ids": failure_ids,
                      "note": "覆盖率表示产生了有效指标的样本比例，不代表业务正确率。"},
             "input_digest": ctx["input_digest"]}
+
+def process_window(ctx):
+    window = ctx["window"]
+    cases = ctx["cases"]
+    facts = window.get("facts", [])
+    reasons = Counter(m.get("reason") for c in cases for m in c["metrics"] if m.get("reason"))
+    failed = sum(c["status"] == "error" or any(m["status"] == "error" for m in c["metrics"]) for c in cases)
+    scored = sum(c["status"] != "error" and not any(m["status"] == "error" for m in c["metrics"]) and any(m["status"] == "observed" for m in c["metrics"]) for c in cases)
+    insufficient = sum(c["status"] != "error" and not any(m["status"] in ("error", "observed") for m in c["metrics"]) and any(m["status"] == "not_computable" for m in c["metrics"]) for c in cases)
+    def seconds(value):
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    delays = sorted(max(0, (seconds(f["scored_at"])-seconds(f["received_at"]))*1000) for f in facts if f.get("scored_at"))
+    sampled = sum(any(m["status"] not in ("skipped", "budget_exhausted") for m in c["metrics"]) for c in cases)
+    stats = {"received":len(facts), "eligible":len(facts), "sampled":sampled, "scored":scored,
+             "unscored":len(cases)-scored-failed-insufficient,
+             "skipped":sum(any(m["status"] == "skipped" for m in c["metrics"]) for c in cases),
+             "budget_exhausted":sum(any(m["status"] == "budget_exhausted" for m in c["metrics"]) for c in cases),
+             "failed":failed, "not_computable":insufficient, "pending":len(facts)-len(cases),
+             "coverage":scored/len(facts) if facts else None, "reasons":dict(reasons),
+             "anomalies":sum(c["status"] != "completed" or any(m["status"] == "error" or (m["status"] == "observed" and m["value"] is False) for m in c["metrics"]) for c in cases)}
+    if delays:
+        stats.update(p50_latency_ms=delays[max(0, math.ceil(.5*len(delays))-1)], p95_latency_ms=delays[max(0, math.ceil(.95*len(delays))-1)])
+    changes = defaultdict(int)
+    for fact in window.get('backlog_facts', facts):
+        changes[fact['received_at']] += 1
+        if fact.get('scored_at'):
+            changes[fact['scored_at']] -= 1
+    pending, backlog = 0, []
+    for stamp in sorted(changes, key=seconds):
+        pending += changes[stamp]
+        backlog.append({'time': stamp, 'pending': pending})
+    stats['backlog_series'] = backlog
+    stats["series"] = {"time":window["start"], **{k:v for k,v in stats.items() if k not in ("reasons", "anomalies", "backlog_series")}}
+    return stats
 
 def conclude(ctx):
     summary = next((o["data"] for o in ctx["outputs"] if o["processor"] == "builtin.basic-summary@1"), None)

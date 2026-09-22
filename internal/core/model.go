@@ -138,25 +138,42 @@ type Run struct {
 	Scope         *WindowScope      `json:"scope,omitempty"`
 }
 type WindowScope struct {
-	Kind            string    `json:"kind"`
-	PlanID          string    `json:"plan_id"`
-	Source          string    `json:"source,omitempty"`
-	Start           time.Time `json:"start"`
-	End             time.Time `json:"end"`
-	Watermark       time.Time `json:"watermark"`
-	Revision        int       `json:"revision"`
-	State           string    `json:"state"`
-	Received        int       `json:"received"`
-	Eligible        int       `json:"eligible"`
-	Sampled         int       `json:"sampled"`
-	Scored          int       `json:"scored"`
-	NotComputable   int       `json:"not_computable"`
-	Failed          int       `json:"failed"`
-	Pending         int       `json:"pending"`
-	P50LatencyMS    *float64  `json:"p50_latency_ms,omitempty"`
-	P95LatencyMS    *float64  `json:"p95_latency_ms,omitempty"`
-	JudgeSampleRate *float64  `json:"judge_sample_rate,omitempty"`
-	JudgeBudget     *int      `json:"judge_per_window_budget,omitempty"`
+	StatisticsAvailable bool           `json:"statistics_available"`
+	Facts               []WindowFact   `json:"facts,omitempty"`
+	BacklogFacts        []WindowFact   `json:"backlog_facts,omitempty"`
+	Coverage            *float64       `json:"coverage,omitempty"`
+	Reasons             map[string]int `json:"reasons,omitempty"`
+	Anomalies           int            `json:"anomalies"`
+	Skipped             int            `json:"skipped"`
+	BudgetExhausted     int            `json:"budget_exhausted"`
+	Unscored            int            `json:"unscored"`
+	Kind                string         `json:"kind"`
+	PlanID              string         `json:"plan_id"`
+	Source              string         `json:"source,omitempty"`
+	Start               time.Time      `json:"start"`
+	End                 time.Time      `json:"end"`
+	Watermark           time.Time      `json:"watermark"`
+	Revision            int            `json:"revision"`
+	State               string         `json:"state"`
+	Received            int            `json:"received"`
+	Eligible            int            `json:"eligible"`
+	Sampled             int            `json:"sampled"`
+	Scored              int            `json:"scored"`
+	NotComputable       int            `json:"not_computable"`
+	Failed              int            `json:"failed"`
+	Pending             int            `json:"pending"`
+	P50LatencyMS        *float64       `json:"p50_latency_ms,omitempty"`
+	P95LatencyMS        *float64       `json:"p95_latency_ms,omitempty"`
+	JudgeSampleRate     *float64       `json:"judge_sample_rate,omitempty"`
+	JudgeBudget         *int           `json:"judge_per_window_budget,omitempty"`
+}
+type WindowFact struct {
+	Origin     map[string]string `json:"origin"`
+	CaseID     string            `json:"case_id"`
+	ReceivedAt time.Time         `json:"received_at"`
+	StartedAt  *time.Time        `json:"started_at,omitempty"`
+	ScoredAt   *time.Time        `json:"scored_at,omitempty"`
+	Revision   int               `json:"evidence_revision"`
 }
 type ProductionEvent struct {
 	SchemaVersion    string        `json:"schema_version"`

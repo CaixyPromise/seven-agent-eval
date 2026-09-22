@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import copy
 import queue
 import threading
 import time
 import urllib.request
+import urllib.error
 
 
 class AsyncEEPExporter:
@@ -17,16 +19,22 @@ class AsyncEEPExporter:
     """
 
     def __init__(self, endpoint: str, plan_id: str, max_queue: int = 1000, timeout: float = 1.0):
+        if max_queue < 1 or timeout <= 0:
+            raise ValueError("positive queue size and timeout required")
         self.endpoint, self.plan_id, self.timeout = endpoint, plan_id, timeout
         self._queue: queue.Queue[dict | None] = queue.Queue(max_queue)
         self.sent = self.retried = self.dropped = 0
+        self.rejected = 0
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="seven-eep-exporter", daemon=True)
         self._thread.start()
 
     def emit(self, event: dict) -> bool:
+        if self._stop.is_set():
+            self.dropped += 1
+            return False
         try:
-            self._queue.put_nowait(event)
+            self._queue.put_nowait(copy.deepcopy(event))
             return True
         except queue.Full:
             self.dropped += 1
@@ -45,18 +53,40 @@ class AsyncEEPExporter:
             event = self._queue.get()
             if event is None:
                 return
-            body = json.dumps({"plan_id": self.plan_id, "events": [event]}).encode()
-            request = urllib.request.Request(self.endpoint, data=body, headers={"Content-Type": "application/json"})
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                    if response.status == 202:
-                        self.sent += 1
-                        continue
-            except Exception:
+                body = json.dumps({"plan_id": self.plan_id, "events": [event]}, allow_nan=False).encode()
+            except (ValueError, TypeError):
+                self.rejected += 1
+                continue
+            delay = .1
+            # Retain the same event in-flight until acknowledged, preserving
+            # FIFO and preventing queue contention from dropping retry traffic.
+            while not self._stop.is_set():
+                request = urllib.request.Request(self.endpoint, data=body, headers={"Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                        ack = json.load(response)
+                        item = ack.get("items", [{}])[0]
+                        if response.status == 202 and item.get("status") in ("accepted", "duplicate"):
+                            self.sent += 1
+                            break
+                        if item.get("code") != "QUEUE_FULL":
+                            self.rejected += 1
+                            break
+                except urllib.error.HTTPError as error:
+                    if 400 <= error.code < 500 and error.code not in (408, 429):
+                        self.rejected += 1
+                        break
+                except (OSError, ValueError, IndexError):
+                    pass
                 self.retried += 1
-            # Retry once after a short delay without blocking the business caller.
-            time.sleep(0.1)
-            if not self._stop.is_set():
-                # ``emit`` is also the single place that accounts for a full
-                # queue. Retrying must not double-count one source-side drop.
-                self.emit(event)
+                self._stop.wait(delay)
+                delay = min(2.0, delay*2)
+            else:
+                self.dropped += 1
+        while True:
+            try:
+                if self._queue.get_nowait() is not None:
+                    self.dropped += 1
+            except queue.Empty:
+                break

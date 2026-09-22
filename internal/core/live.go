@@ -12,40 +12,50 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"seven-agent-eval/protocol"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 type liveRecord struct {
-	PlanID     string          `json:"plan_id"`
-	Event      ProductionEvent `json:"event"`
-	Digest     string          `json:"digest"`
-	ReceivedAt time.Time       `json:"received_at"`
-	ScoredAt   *time.Time      `json:"scored_at,omitempty"`
-	Case       *CaseResult     `json:"case,omitempty"`
+	ScoredSequence int               `json:"scored_sequence,omitempty"`
+	Sequence       int               `json:"sequence"`
+	WindowTime     time.Time         `json:"window_time"`
+	StartedAt      *time.Time        `json:"started_at,omitempty"`
+	Decisions      map[string]string `json:"decisions,omitempty"`
+	PlanID         string            `json:"plan_id"`
+	Event          ProductionEvent   `json:"event"`
+	Digest         string            `json:"digest"`
+	ReceivedAt     time.Time         `json:"received_at"`
+	ScoredAt       *time.Time        `json:"scored_at,omitempty"`
+	Case           *CaseResult       `json:"case,omitempty"`
 }
 type liveJournal struct {
-	Sequence int         `json:"sequence"`
-	Type     string      `json:"type"`
-	Time     time.Time   `json:"time"`
-	PlanID   string      `json:"plan_id,omitempty"`
-	Record   *liveRecord `json:"record,omitempty"`
+	Assembly *otlpAssembly `json:"assembly,omitempty"`
+	Sequence int           `json:"sequence"`
+	Type     string        `json:"type"`
+	Time     time.Time     `json:"time"`
+	PlanID   string        `json:"plan_id,omitempty"`
+	Record   *liveRecord   `json:"record,omitempty"`
 }
 type LivePlanStatus struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Unit    string `json:"unit"`
-	Paused  bool   `json:"paused"`
-	Pending int    `json:"pending"`
-	Storage int64  `json:"storage_bytes"`
+	ProjectionDegraded bool   `json:"projection_degraded"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Unit               string `json:"unit"`
+	Paused             bool   `json:"paused"`
+	Pending            int    `json:"pending"`
+	Storage            int64  `json:"storage_bytes"`
 }
 type LivePoint struct {
+	Unscored      int       `json:"unscored"`
 	Time          time.Time `json:"time"`
 	Coverage      *float64  `json:"coverage,omitempty"`
 	Received      int       `json:"received"`
@@ -57,25 +67,30 @@ type LivePoint struct {
 	P95LatencyMS  *float64  `json:"p95_latency_ms,omitempty"`
 }
 type LiveReport struct {
-	Plan    LivePlanStatus `json:"plan"`
-	From    time.Time      `json:"from"`
-	To      time.Time      `json:"to"`
-	Current *Run           `json:"current,omitempty"`
-	Windows []Run          `json:"windows"`
-	Series  []LivePoint    `json:"series"`
+	Summary       *WindowScope   `json:"summary,omitempty"`
+	BacklogSeries []BacklogPoint `json:"backlog_series"`
+	Plan          LivePlanStatus `json:"plan"`
+	From          time.Time      `json:"from"`
+	To            time.Time      `json:"to"`
+	Current       *Run           `json:"current,omitempty"`
+	Windows       []Run          `json:"windows"`
+	Series        []LivePoint    `json:"series"`
 }
 type LiveManager struct {
-	Engine  *Engine
-	root    string
-	db      *sql.DB
-	mu      sync.Mutex
-	seq     int
-	records map[string]*liveRecord // plan + source + event id
-	plans   map[string]Run
-	paused  map[string]bool
-	wake    chan struct{}
-	stop    context.CancelFunc
-	wg      sync.WaitGroup
+	assemblies         map[string]otlpAssembly
+	projectionDegraded bool
+	journalFailure     error
+	Engine             *Engine
+	root               string
+	db                 *sql.DB
+	mu                 sync.Mutex
+	seq                int
+	records            map[string]*liveRecord // plan + source + event id
+	plans              map[string]Run
+	paused             map[string]bool
+	wake               chan struct{}
+	stop               context.CancelFunc
+	wg                 sync.WaitGroup
 }
 
 func NewLiveManager(engine *Engine) (*LiveManager, error) {
@@ -92,7 +107,7 @@ func NewLiveManager(engine *Engine) (*LiveManager, error) {
 		db.Close()
 		return nil, err
 	}
-	m := &LiveManager{Engine: engine, root: root, db: db, records: map[string]*liveRecord{}, plans: map[string]Run{}, paused: map[string]bool{}, wake: make(chan struct{}, 1)}
+	m := &LiveManager{Engine: engine, root: root, db: db, records: map[string]*liveRecord{}, plans: map[string]Run{}, paused: map[string]bool{}, assemblies: map[string]otlpAssembly{}, wake: make(chan struct{}, 1)}
 	if err = m.rebuild(); err != nil {
 		db.Close()
 		return nil, err
@@ -118,6 +133,7 @@ func (m *LiveManager) Start() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
+			m.flushOTLP(ctx)
 			m.scorePending(ctx)
 			select {
 			case <-ctx.Done():
@@ -157,10 +173,10 @@ func unitKey(plan Plan, e ProductionEvent) (string, error) {
 		return "", errors.New("stream configuration missing")
 	}
 	if plan.Stream.Unit == "trace" && e.TraceID != "" {
-		return "trace:" + e.Source + ":" + e.TraceID, nil
+		return "trace:" + Digest([]string{e.Source, e.Project, e.TraceID}), nil
 	}
 	if plan.Stream.Unit == "turn" && e.TurnID != "" {
-		return "turn:" + e.Source + ":" + e.TurnID, nil
+		return "turn:" + Digest([]string{e.Source, e.Project, e.TraceID, e.TurnID}), nil
 	}
 	return "", errors.New("event does not contain the plan evaluation unit")
 }
@@ -181,13 +197,18 @@ func (m *LiveManager) plan(ctx context.Context, id string) (Run, error) {
 	return cloneLiveRun(r), nil
 }
 func (m *LiveManager) appendLocked(ev liveJournal) error {
+	if m.journalFailure != nil {
+		return errors.New("live journal requires recovery")
+	}
 	ev.Sequence = m.seq + 1
 	ev.Time = time.Now().UTC()
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(m.root, "events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	journalPath := filepath.Join(m.root, "events.jsonl")
+	_, statErr := os.Stat(journalPath)
+	f, err := os.OpenFile(journalPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -197,15 +218,32 @@ func (m *LiveManager) appendLocked(ev liveJournal) error {
 	}
 	closeErr := f.Close()
 	if err != nil {
+		m.journalFailure = err
 		return err
 	}
 	if closeErr != nil {
+		m.journalFailure = closeErr
 		return closeErr
+	}
+	if os.IsNotExist(statErr) {
+		dir, openErr := os.Open(m.root)
+		if openErr != nil {
+			m.journalFailure = openErr
+			return openErr
+		}
+		err = dir.Sync()
+		dir.Close()
+		if err != nil {
+			m.journalFailure = err
+			return err
+		}
 	}
 	m.seq = ev.Sequence
 	// The journal is authoritative. This SQLite write is only a query projection.
 	if _, err = m.db.Exec("INSERT INTO live_projection(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body", fmt.Sprintf("%09d", ev.Sequence), b); err != nil {
-		return &ProjectionError{Err: err}
+		// ACK depends only on the synced journal. Keep the in-memory state in
+		// step with it even if this rebuildable projection is unavailable.
+		m.projectionDegraded = true
 	}
 	return nil
 }
@@ -222,30 +260,54 @@ func (m *LiveManager) rebuild() error {
 		return err
 	}
 	defer f.Close()
-	s := bufio.NewScanner(f)
-	s.Buffer(make([]byte, 4096), 2<<20)
-	for s.Scan() {
+	reader := bufio.NewReader(f)
+	var offset int64
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if readErr == io.EOF {
+			// An incomplete, unacknowledged tail is not a committed record.
+			if len(line) > 0 {
+				return os.Truncate(p, offset)
+			}
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+		if len(line) > 64<<20 {
+			return errors.New("live journal record too large")
+		}
 		var ev liveJournal
-		if err := decodeJSON(s.Bytes(), &ev); err != nil {
+		if err := decodeJSON(line, &ev); err != nil {
 			return errors.New("corrupt live journal")
 		}
 		if ev.Sequence != m.seq+1 {
 			return errors.New("live journal sequence gap")
 		}
 		m.seq = ev.Sequence
-		if _, err := m.db.Exec("INSERT INTO live_projection(id,body) VALUES(?,?)", fmt.Sprintf("%09d", ev.Sequence), s.Bytes()); err != nil {
+		if _, err := m.db.Exec("INSERT INTO live_projection(id,body) VALUES(?,?)", fmt.Sprintf("%09d", ev.Sequence), line); err != nil {
 			return err
 		}
 		switch ev.Type {
+		case "otlp.updated":
+			if ev.Assembly != nil {
+				m.assemblies[ev.Assembly.Key] = *ev.Assembly
+			}
 		case "event.accepted":
 			if ev.Record != nil {
 				copy := *ev.Record
+				copy.Sequence = ev.Sequence
+				if copy.WindowTime.IsZero() {
+					copy.WindowTime = copy.Event.EventTime
+				}
 				m.records[liveKey(copy.PlanID, copy.Event.Source, copy.Event.EventID)] = &copy
 			}
-		case "event.scored":
+		case "event.started", "event.scored":
 			if ev.Record != nil {
 				if old := m.records[liveKey(ev.Record.PlanID, ev.Record.Event.Source, ev.Record.Event.EventID)]; old != nil {
 					old.Case, old.ScoredAt = ev.Record.Case, ev.Record.ScoredAt
+					old.ScoredSequence = ev.Record.ScoredSequence
+					old.StartedAt, old.Decisions = ev.Record.StartedAt, ev.Record.Decisions
 				}
 			}
 		case "plan.paused":
@@ -253,8 +315,8 @@ func (m *LiveManager) rebuild() error {
 		case "plan.resumed":
 			m.paused[ev.PlanID] = false
 		}
+		offset += int64(len(line))
 	}
-	return s.Err()
 }
 func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResult, error) {
 	if batch.PlanID == "" || len(batch.Events) == 0 {
@@ -313,12 +375,30 @@ func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResu
 			}
 			continue
 		}
+		unit, _ := unitKey(planRun.Effective.Plan, event)
+		conflict := false
+		windowTime, earliest := event.EventTime, m.seq+1
+		for _, prior := range m.records {
+			priorUnit, _ := unitKey(planRun.Effective.Plan, prior.Event)
+			if prior.PlanID == batch.PlanID && priorUnit == unit && prior.Sequence < earliest {
+				windowTime, earliest = prior.WindowTime, prior.Sequence
+			}
+			if prior.PlanID == batch.PlanID && priorUnit == unit && prior.Event.EvidenceRevision == event.EvidenceRevision {
+				conflict = true
+				break
+			}
+		}
+		if conflict {
+			out.Rejected++
+			out.Items = append(out.Items, IngestItem{EventID: event.EventID, Status: "rejected", Code: "EVIDENCE_REVISION_CONFLICT"})
+			continue
+		}
 		if pending >= planRun.Effective.Plan.Stream.MaxPending {
 			out.Rejected++
 			out.Items = append(out.Items, IngestItem{EventID: event.EventID, Status: "rejected", Code: "QUEUE_FULL"})
 			continue
 		}
-		record := &liveRecord{PlanID: batch.PlanID, Event: event, Digest: digest, ReceivedAt: time.Now().UTC()}
+		record := &liveRecord{WindowTime: windowTime, Sequence: m.seq + 1, PlanID: batch.PlanID, Event: event, Digest: digest, ReceivedAt: time.Now().UTC()}
 		if err := m.appendLocked(liveJournal{Type: "event.accepted", PlanID: batch.PlanID, Record: record}); err != nil {
 			return out, err
 		}
@@ -340,14 +420,55 @@ func (m *LiveManager) scorePending(ctx context.Context) {
 		}
 	}
 	m.mu.Unlock()
+	sort.Slice(work, func(i, j int) bool { return work[i].Sequence < work[j].Sequence })
 	for _, record := range work {
+		if ctx.Err() != nil {
+			return
+		}
 		plan, err := m.plan(ctx, record.PlanID)
 		if err != nil {
 			continue
 		}
+		m.mu.Lock()
+		if m.paused[record.PlanID] {
+			m.mu.Unlock()
+			continue
+		}
+		if record.StartedAt == nil {
+			now := time.Now().UTC()
+			record.StartedAt = &now
+			record.Decisions = m.judgeDecisionsLocked(plan, record)
+			if err := m.appendLocked(liveJournal{Type: "event.started", PlanID: record.PlanID, Record: record}); err != nil {
+				m.mu.Unlock()
+				return
+			}
+			original := m.records[liveKey(record.PlanID, record.Event.Source, record.Event.EventID)]
+			original.StartedAt, original.Decisions = record.StartedAt, record.Decisions
+		} else {
+			// A reserved judge with no durable result has an uncertain outcome.
+			// Preserve its budget slot and surface interruption without replaying it.
+			decisions := map[string]string{}
+			for ref, decision := range record.Decisions {
+				if decision == "selected" {
+					decision = "interrupted"
+				}
+				decisions[ref] = decision
+			}
+			record.Decisions = decisions
+		}
+		m.mu.Unlock()
 		cctx, cancel := context.WithTimeout(ctx, time.Duration(plan.Effective.Plan.TimeoutSeconds)*time.Second)
-		caseResult, err := m.Engine.EvaluateExisting(cctx, &plan, record.Event.Case, record.Event.Result)
+		cctx = context.WithValue(cctx, liveDecisionKey{}, record.Decisions)
+		// User case IDs are not globally unique across production requests.
+		c := record.Event.Case
+		unit, _ := unitKey(plan.Effective.Plan, record.Event)
+		c.ID = "live-" + Digest([]string{record.PlanID, unit})
+		cctx = context.WithValue(cctx, liveIdentityKey{}, []any{record.PlanID, unit, record.Event.EvidenceRevision})
+		caseResult, err := m.Engine.EvaluateExisting(cctx, &plan, c, record.Event.Result)
 		cancel()
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			continue
 		}
@@ -356,8 +477,11 @@ func (m *LiveManager) scorePending(ctx context.Context) {
 		m.mu.Lock()
 		original := m.records[liveKey(record.PlanID, record.Event.Source, record.Event.EventID)]
 		if original != nil && original.Case == nil {
+			record.ScoredSequence = m.seq + 1
 			if m.appendLocked(liveJournal{Type: "event.scored", PlanID: record.PlanID, Record: record}) == nil {
 				original.Case, original.ScoredAt = record.Case, record.ScoredAt
+				original.ScoredSequence = record.ScoredSequence
+				original.Decisions = record.Decisions
 			}
 		}
 		m.mu.Unlock()
@@ -440,7 +564,7 @@ func (m *LiveManager) statusLocked(id string, plan Run) LivePlanStatus {
 	if stat != nil {
 		size = stat.Size()
 	}
-	return LivePlanStatus{ID: id, Name: id, Unit: plan.Effective.Plan.Stream.Unit, Paused: m.paused[id], Pending: pending, Storage: size}
+	return LivePlanStatus{ID: id, Name: id, Unit: plan.Effective.Plan.Stream.Unit, Paused: m.paused[id], Pending: pending, Storage: size, ProjectionDegraded: m.projectionDegraded}
 }
 func (m *LiveManager) Report(ctx context.Context, planID string, from, to time.Time) (LiveReport, error) {
 	plan, err := m.plan(ctx, planID)
@@ -472,10 +596,10 @@ func (m *LiveManager) Report(ctx context.Context, planID string, from, to time.T
 	groups := map[time.Time][]liveRecord{}
 	step := time.Duration(plan.Effective.Plan.Stream.WindowSeconds) * time.Second
 	for _, r := range latest {
-		if r.Event.EventTime.Before(from) || !r.Event.EventTime.Before(to) {
+		if r.WindowTime.Before(from) || !r.WindowTime.Before(to) {
 			continue
 		}
-		start := r.Event.EventTime.UTC().Truncate(step)
+		start := r.WindowTime.UTC().Truncate(step)
 		groups[start] = append(groups[start], r)
 	}
 	starts := make([]time.Time, 0, len(groups))
@@ -486,18 +610,47 @@ func (m *LiveManager) Report(ctx context.Context, planID string, from, to time.T
 	out := LiveReport{Plan: status, From: from, To: to, Windows: []Run{}, Series: []LivePoint{}}
 	for _, start := range starts {
 		window := m.window(ctx, plan, start, groups[start])
-		out.Windows = append(out.Windows, window)
-		scope := window.Scope
-		coverage := (*float64)(nil)
-		if scope.Eligible > 0 {
-			v := float64(scope.Scored) / float64(scope.Eligible)
-			coverage = &v
+		if ctx.Err() != nil {
+			return LiveReport{}, ctx.Err()
 		}
-		out.Series = append(out.Series, LivePoint{Time: start, Coverage: coverage, Received: scope.Received, Scored: scope.Scored, NotComputable: scope.NotComputable, Failed: scope.Failed, Pending: scope.Pending, P50LatencyMS: scope.P50LatencyMS, P95LatencyMS: scope.P95LatencyMS})
+		// Freeze the exact revision shown to the user. A later revision must
+		// not invalidate an open drawer or silently change its export.
+		m.mu.Lock()
+		dir := filepath.Join(m.root, "windows")
+		path := filepath.Join(dir, Digest(window.ID)+".json")
+		if body, readErr := os.ReadFile(path); readErr == nil {
+			var cached Run
+			if decodeJSON(body, &cached) == nil {
+				window = cached
+			}
+		} else if os.IsNotExist(readErr) && window.Message == "" {
+			if err = os.MkdirAll(dir, 0700); err == nil {
+				err = atomicJSON(path, window)
+			}
+		} else if !os.IsNotExist(readErr) {
+			err = readErr
+		}
+		m.mu.Unlock()
+		if err != nil {
+			return LiveReport{}, err
+		}
+		out.Windows = append(out.Windows, window)
+		for _, output := range window.Outputs {
+			if stats, ok := output.Data["window"].(map[string]any); ok {
+				if series, ok := stats["series"]; ok {
+					b, _ := json.Marshal(series)
+					var point LivePoint
+					if decodeJSON(b, &point) == nil {
+						out.Series = append(out.Series, point)
+					}
+				}
+			}
+		}
 	}
 	if len(out.Windows) > 0 {
 		current := out.Windows[len(out.Windows)-1]
 		out.Current = &current
+		m.rangeSummary(ctx, plan, &out)
 	}
 	return out, nil
 }
@@ -507,7 +660,7 @@ func (m *LiveManager) window(ctx context.Context, base Run, start time.Time, rec
 	if !time.Now().UTC().Before(scope.Watermark) {
 		scope.State = "final"
 	}
-	latencies := []float64{}
+	sort.Slice(records, func(i, j int) bool { return records[i].Sequence < records[j].Sequence })
 	r := cloneLiveRun(base)
 	r.ID = fmt.Sprintf("live-%s-%d-r1", base.Effective.Plan.ID, start.Unix())
 	r.CreatedAt = time.Now().UTC()
@@ -518,8 +671,10 @@ func (m *LiveManager) window(ctx context.Context, base Run, start time.Time, rec
 	r.DatasetDigest = ""
 	r.Status = "completed"
 	for _, record := range records {
-		if record.Event.EvidenceRevision > scope.Revision {
-			scope.Revision = record.Event.EvidenceRevision
+		unit, _ := unitKey(base.Effective.Plan, record.Event)
+		scope.Facts = append(scope.Facts, WindowFact{Origin: map[string]string{"source": record.Event.Source, "project": record.Event.Project, "trace_id": record.Event.TraceID, "turn_id": record.Event.TurnID, "event_id": record.Event.EventID, "case_id": record.Event.Case.ID}, CaseID: "live-" + Digest([]string{record.PlanID, unit}), ReceivedAt: record.ReceivedAt, StartedAt: record.StartedAt, ScoredAt: record.ScoredAt, Revision: record.Event.EvidenceRevision})
+		if max(record.Sequence, record.ScoredSequence) > scope.Revision {
+			scope.Revision = max(record.Sequence, record.ScoredSequence)
 			r.ID = fmt.Sprintf("live-%s-%d-r%d", base.Effective.Plan.ID, start.Unix(), scope.Revision)
 		}
 		if record.Case == nil {
@@ -528,49 +683,52 @@ func (m *LiveManager) window(ctx context.Context, base Run, start time.Time, rec
 			continue
 		}
 		r.Cases = append(r.Cases, *record.Case)
+		if record.Case.Status != "completed" {
+			r.Status = "partial"
+		}
 		r.Completed++
-		if record.Case.Status == "error" {
-			scope.Failed++
-		}
-		observed := false
-		notComputable := false
-		evaluationFailed := false
-		for _, m := range record.Case.Metrics {
-			if m.Status == "observed" {
-				observed = true
-			}
-			if m.Status == "not_computable" {
-				notComputable = true
-			}
-			if m.Status == "error" {
-				evaluationFailed = true
-			}
-		}
-		if observed {
-			scope.Scored++
-		}
-		if evaluationFailed {
-			scope.Failed++
-		} else if notComputable && !observed {
-			scope.NotComputable++
-		}
-		if record.Event.Result.LatencyMS != nil {
-			latencies = append(latencies, *record.Event.Result.LatencyMS)
-		}
 	}
-	scope.Sampled = scope.Scored
-	scope.P50LatencyMS = percentile(latencies, .5)
-	scope.P95LatencyMS = percentile(latencies, .95)
 	if scope.State == "provisional" {
 		r.Status = "partial"
 	}
+	r.ID += "-" + scope.State
+	r.ID += "-" + Digest(base.Effective)[:12]
+	if body, err := os.ReadFile(filepath.Join(m.root, "windows", Digest(r.ID)+".json")); err == nil {
+		var cached Run
+		if decodeJSON(body, &cached) == nil {
+			return cached
+		}
+	}
 	_ = m.Engine.ProcessExisting(ctx, &r)
+	for _, output := range r.Outputs {
+		if stats, ok := output.Data["window"].(map[string]any); ok {
+			b, _ := json.Marshal(stats)
+			// Only copy statistical fields. A Processor cannot rewrite window identity.
+			var summary WindowScope
+			if decodeJSON(b, &summary) == nil {
+				scope.Scored, scope.Sampled, scope.Failed, scope.NotComputable = summary.Scored, summary.Sampled, summary.Failed, summary.NotComputable
+				scope.Coverage, scope.P50LatencyMS, scope.P95LatencyMS = summary.Coverage, summary.P50LatencyMS, summary.P95LatencyMS
+				scope.Reasons, scope.Anomalies = summary.Reasons, summary.Anomalies
+				scope.Skipped, scope.BudgetExhausted, scope.Unscored = summary.Skipped, summary.BudgetExhausted, summary.Unscored
+				scope.StatisticsAvailable = true
+			}
+		}
+	}
 	if b, err := json.Marshal(m.Engine.redactForRun(&r, r)); err == nil {
-		_ = decodeJSON(b, &r)
+		var redacted Run
+		if decodeJSON(b, &redacted) == nil {
+			r = redacted
+		}
 	}
 	return r
 }
 func (m *LiveManager) Window(ctx context.Context, id string) (Run, error) {
+	if body, err := os.ReadFile(filepath.Join(m.root, "windows", Digest(id)+".json")); err == nil {
+		var snapshot Run
+		if decodeJSON(body, &snapshot) == nil && snapshot.ID == id {
+			return snapshot, nil
+		}
+	}
 	now := time.Now().UTC()
 	reports, err := m.Plans(ctx)
 	if err != nil {
@@ -624,12 +782,18 @@ func MapOTLPJSON(body []byte) (IngestBatch, error) {
 				var root *otlpSpan
 				for i := range spans {
 					a := attrs(spans[i].Attributes)
-					if spans[i].ParentSpanID == "" || a["openinference.span.kind"] == "AGENT" || a["openinference.span.kind"] == "CHAIN" {
+					if spans[i].ParentSpanID == "" {
 						root = &spans[i]
 						break
 					}
+					if root == nil && (a["openinference.span.kind"] == "AGENT" || a["openinference.span.kind"] == "CHAIN") {
+						root = &spans[i]
+					}
 				}
 				if root == nil {
+					return IngestBatch{}, errors.New("OTLP root mapping missing")
+				}
+				if root.EndTimeUnixNano == 0 {
 					return IngestBatch{}, errors.New("OTLP root mapping missing")
 				}
 				a := attrs(root.Attributes)
@@ -637,9 +801,14 @@ func MapOTLPJSON(body []byte) (IngestBatch, error) {
 				for _, span := range spans {
 					sa := attrs(span.Attributes)
 					if sa["openinference.span.kind"] == "RETRIEVER" {
-						for key, value := range sa {
+						keys := make([]string, 0, len(sa))
+						for key := range sa {
+							keys = append(keys, key)
+						}
+						sort.Strings(keys)
+						for _, key := range keys {
 							if strings.HasPrefix(key, "retrieval.documents.") && strings.HasSuffix(key, ".document.content") {
-								contexts = append(contexts, value)
+								contexts = append(contexts, sa[key])
 							}
 						}
 					}
@@ -652,7 +821,32 @@ func MapOTLPJSON(body []byte) (IngestBatch, error) {
 				if turn == "" {
 					turn = resource["seven.eval.turn.id"]
 				}
-				batch.Events = append(batch.Events, ProductionEvent{SchemaVersion: "evaluate.event/v1", Source: source, Project: project, EventID: "otlp:" + trace, EventTime: time.Unix(0, int64(root.EndTimeUnixNano)).UTC(), TraceID: trace, TurnID: turn, EvidenceRevision: 1, Case: Case{ID: trace, Inputs: decodeOTLPValue(a["input.value"], a["input.mime_type"])}, Result: SubjectResult{Response: decodeOTLPValue(a["output.value"], a["output.mime_type"]), Contexts: contexts, LatencyMS: &latency}})
+				usage := map[string]any{}
+				// Prefer a root aggregate; otherwise sum completed LLM child facts.
+				for attribute, key := range map[string]string{"llm.token_count.total": "total_tokens", "llm.token_count.prompt": "input_tokens", "llm.token_count.completion": "output_tokens"} {
+					if value, err := strconv.ParseFloat(a[attribute], 64); err == nil && value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+						usage[key] = value
+						continue
+					}
+					total, found := 0.0, false
+					for _, span := range spans {
+						child := attrs(span.Attributes)
+						if child["openinference.span.kind"] == "LLM" {
+							if value, err := strconv.ParseFloat(child[attribute], 64); err == nil && value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+								total += value
+								found = true
+							}
+						}
+					}
+					if found {
+						usage[key] = total
+					}
+				}
+				metadata := map[string]any{}
+				if a["llm.model_name"] != "" {
+					metadata["openinference.model"] = a["llm.model_name"]
+				}
+				batch.Events = append(batch.Events, ProductionEvent{SchemaVersion: "evaluate.event/v1", Source: source, Project: project, EventID: "otlp:" + trace, EventTime: time.Unix(0, int64(root.EndTimeUnixNano)).UTC(), TraceID: trace, TurnID: turn, EvidenceRevision: 1, Case: Case{ID: trace, Inputs: decodeOTLPValue(a["input.value"], a["input.mime_type"]), Metadata: metadata}, Result: SubjectResult{Response: decodeOTLPValue(a["output.value"], a["output.mime_type"]), Contexts: contexts, LatencyMS: &latency, Usage: usage}})
 			}
 		}
 	}
@@ -676,7 +870,9 @@ type otlpResourceSpan struct {
 type otlpAttr struct {
 	Key   string `json:"key"`
 	Value struct {
-		StringValue string `json:"stringValue"`
+		StringValue string      `json:"stringValue"`
+		IntValue    json.Number `json:"intValue,omitempty"`
+		DoubleValue *float64    `json:"doubleValue,omitempty"`
 	} `json:"value"`
 }
 type otlpSpan struct {
@@ -692,6 +888,12 @@ func attrs(values []otlpAttr) map[string]string {
 	out := map[string]string{}
 	for _, v := range values {
 		out[v.Key] = v.Value.StringValue
+		if v.Value.IntValue != "" {
+			out[v.Key] = v.Value.IntValue.String()
+		}
+		if v.Value.DoubleValue != nil {
+			out[v.Key] = strconv.FormatFloat(*v.Value.DoubleValue, 'f', -1, 64)
+		}
 	}
 	return out
 }
