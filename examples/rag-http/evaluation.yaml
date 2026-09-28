@@ -1,0 +1,4 @@
+schema_version: evaluate.package/v1
+id: rag-http
+version: 1.0.0
+name: 通用 RAG 评测

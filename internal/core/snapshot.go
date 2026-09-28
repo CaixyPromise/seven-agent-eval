@@ -84,6 +84,15 @@ func (e *Engine) snapshot(r *Run) error {
 func (e *Engine) redactForRun(r *Run, v any) any {
 	value := redact(v)
 	secrets := []string{}
+	judgeKey := "SEVEN_EVAL_JUDGE_KEY"
+	if judge, ok := r.Effective.Plan.Parameters["judge"].(map[string]any); ok {
+		if key, ok := judge["auth_env"].(string); ok && key != "" {
+			judgeKey = key
+		}
+	}
+	if secret := os.Getenv(judgeKey); secret != "" {
+		secrets = append(secrets, secret)
+	}
 	for _, a := range r.Effective.Assets {
 		if key, ok := a.Descriptor["auth_env"].(string); ok && key != "" {
 			if secret := os.Getenv(key); secret != "" {

@@ -33,7 +33,7 @@ export default function DiscoveryPage({
   const plans = assets.filter((a) => a.kind === "plan" && a.status === "valid");
   const stats = [
     ["可运行计划", plans.length],
-    ["数据集", assets.filter((a) => a.kind === "dataset").length],
+    ["数据集与数据源", assets.filter((a) => a.kind === "dataset" || a.kind === "source").length],
     [
       "评测扩展",
       assets.filter((a) =>

@@ -1,0 +1,6 @@
+id: questions
+version: '1'
+fields:
+  id: $.id
+  inputs: $.inputs
+  references: $.references

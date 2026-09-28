@@ -104,7 +104,7 @@ func (s *Server) Handler() http.Handler {
 				}
 			}
 			descriptor := map[string]any{}
-			for _, key := range []string{"id", "kind", "mode", "dataset", "evaluators", "processors", "conclusions"} {
+			for _, key := range []string{"id", "kind", "mode", "dataset", "source", "mapping", "format", "preset", "evaluators", "processors", "conclusions"} {
 				if value, ok := asset.Descriptor[key]; ok {
 					descriptor[key] = value
 				}

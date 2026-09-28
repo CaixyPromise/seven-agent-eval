@@ -1,7 +1,7 @@
 import Table, { type ColumnsType } from "antd/es/table";
 import Collapse from "antd/es/collapse";
 import type { Series } from "../../domain/types";
-import { metricNames, pretty } from "../../domain/presentation";
+import { metricLabel, pretty } from "../../domain/presentation";
 export function MetricSummary({ series }: { series: Series[] }) {
   const columns: ColumnsType<Series> = [
     {
@@ -10,7 +10,7 @@ export function MetricSummary({ series }: { series: Series[] }) {
       minWidth: 220,
       render: (_, item) => (
         <>
-          <strong>{metricNames[item.metric_id] ?? item.metric_id}</strong>
+          <strong>{metricLabel(item.metric_id,item.parameters)}</strong>
           <small className="secondary-id">{item.metric_id}</small>
         </>
       ),
@@ -24,7 +24,7 @@ export function MetricSummary({ series }: { series: Series[] }) {
           {item.rate != null
             ? (item.rate * 100).toFixed(1) + "%"
             : item.mean != null
-              ? item.mean.toFixed(1)
+              ? item.mean.toFixed(item.metric_id.startsWith("rag.") ? 4 : 1)
               : "—"}
           {item.p95 != null ? (
             <small className="secondary-id">p95 {item.p95.toFixed(1)}</small>

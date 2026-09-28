@@ -3,6 +3,7 @@ import Button from "antd/es/button";
 import Checkbox from "antd/es/checkbox";
 import Tag from "antd/es/tag";
 import Table, { type ColumnsType } from "antd/es/table";
+import Select from "antd/es/select";
 import type { CaseResult } from "../../domain/types";
 import { isAnomaly, pretty } from "../../domain/presentation";
 import { StatusBadge } from "../../components/StatusBadge";
@@ -15,7 +16,9 @@ export function SampleTable({
 }) {
   const [onlyAnomalies, setOnlyAnomalies] = useState(false),
     [page, setPage] = useState(1);
-  const filtered = onlyAnomalies ? samples.filter(isAnomaly) : samples;
+  const [episode, setEpisode]=useState<string | undefined>();
+  const episodeIDs=Array.from(new Set(samples.map(s=>s.case.metadata?.episode_id).filter((id):id is string=>Boolean(id))));
+  const filtered = samples.filter(s=>(!onlyAnomalies || isAnomaly(s)) && (!episode || s.case.metadata?.episode_id===episode));
   const columns: ColumnsType<CaseResult> = [
     {
       title: "样本",
@@ -80,6 +83,8 @@ export function SampleTable({
     <>
       <div className="sample-toolbar">
         <span>{samples.length} 条样本</span>
+        {episodeIDs.length ? <Select aria-label="筛选 Episode" placeholder="全部 Episode" allowClear style={{minWidth:160,maxWidth:240}} value={episode}
+          options={episodeIDs.map(id=>({value:id,label:id}))} onChange={value=>{setEpisode(value);setPage(1);}} /> : null}
         <Checkbox
           checked={onlyAnomalies}
           onChange={(e) => {

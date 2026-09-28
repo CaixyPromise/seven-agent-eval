@@ -31,9 +31,9 @@ export function PlanCard({
             </Tag>
           </div>
           <p>
-            <span>数据集</span>{" "}
-            {String(asset.descriptor?.dataset ?? "未指定").replace(
-              /^dataset:/,
+            <span>{asset.descriptor?.source ? "数据源" : "数据集"}</span>{" "}
+            {String(asset.descriptor?.source ?? asset.descriptor?.dataset ?? "未指定").replace(
+              /^(dataset|source):/,
               "",
             )}
           </p>

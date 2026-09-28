@@ -7,7 +7,15 @@ def _define(kind, **descriptor):
     return register
 
 def subject(**kwargs):
-    return _define("subject", **kwargs)
+    create=kwargs.pop("session_create",None)
+    cleanup=kwargs.pop("session_cleanup",None)
+    def register(fn):
+        fn=_define("subject",**kwargs,**({"session_lifecycle":True} if create else {}))(fn)
+        fn.__seven_session_create__=create
+        fn.__seven_session_cleanup__=cleanup
+        if cleanup:fn.__seven_descriptor__["session_cleanup"]=True
+        return fn
+    return register
 
 def evaluator(**kwargs):
     return _define("evaluator", **kwargs)

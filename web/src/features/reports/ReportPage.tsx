@@ -23,6 +23,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { ErrorNotice, LoadingState } from "../../components/Feedback";
 import { JsonDetails } from "../../components/JsonDetails";
 import { MetricSummary } from "./MetricSummary";
+import { EpisodeTable } from "./EpisodeTable";
 import { SampleTable } from "./SampleTable";
 import { SampleDrawer } from "./SampleDrawer";
 export default function ReportPage({
@@ -218,6 +219,7 @@ export default function ReportPage({
             <Tabs
               defaultActiveKey="samples"
               items={[
+                ...(run.episodes?.length ? [{key:"episodes",label:"Episode 与 Turns",children:<EpisodeTable episodes={run.episodes} samples={run.cases} onOpen={setSample} />}] : []),
                 {
                   key: "samples",
                   label: "样本与证据",
@@ -248,6 +250,7 @@ export default function ReportPage({
                   label: "执行配置",
                   children: (
                     <div className="panel-body">
+                      {run.dataset_revision ? <JsonDetails label="数据版本" value={run.dataset_revision} /> : null}
                       <JsonDetails value={run.effective} />
                     </div>
                   ),

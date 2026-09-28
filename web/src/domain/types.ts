@@ -20,10 +20,10 @@ export type Metric = {
 };
 export type CaseResult = {
   redaction_applied?: boolean;
-  case: { id: string; inputs: unknown; references?: unknown };
+  case: { id: string; inputs: unknown; references?: unknown; metadata?: {episode_id?: string; turn_id?: string} };
   status: string;
   reason?: string;
-  result: { response: unknown; contexts?: unknown };
+  result: { response: unknown; contexts?: unknown; retrieval?: RetrievalDocument[]; tools?: unknown[]; citations?: unknown[] };
   metrics: Metric[];
 };
 export type RunSummary = {
@@ -35,6 +35,8 @@ export type RunSummary = {
   total: number;
 };
 export type Run = RunSummary & {
+  dataset_revision?: unknown;
+  episodes?: EpisodeResult[];
   scope?: WindowScope;
   cases: CaseResult[];
   outputs: { processor: string; data: Record<string, unknown> }[];
@@ -42,6 +44,8 @@ export type Run = RunSummary & {
   catalogs: unknown;
   effective: unknown;
 };
+export type EpisodeResult = { id: string; status: string; case_ids: string[]; completed: number };
+export type RetrievalDocument = {id: string; text: string; score?: number};
 export type Series = {
   metric_id: string;
   observed: number;

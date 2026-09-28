@@ -52,7 +52,19 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 	if err != nil {
 		return Run{}, planError(err)
 	}
-	cases, digest, err := e.readCases(d, effective.Plan)
+	var cases []Case
+	var digest string
+	var revision *DatasetRevision
+	if effective.Plan.Source != "" {
+		var frozen DatasetRevision
+		cases, frozen, err = e.readSource(d, effective.Plan)
+		digest, revision = frozen.Digest, &frozen
+		if err == nil {
+			cases, err = expandEpisodes(cases)
+		}
+	} else {
+		cases, digest, err = e.readCases(d, effective.Plan)
+	}
 	if err != nil {
 		return Run{}, planError(err)
 	}
@@ -86,6 +98,26 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 	r := Run{SchemaVersion: Version, ID: NewID(), Package: d.Package, CreatedAt: time.Now().UTC(), Status: "running",
 		Total: len(cases), Effective: effective, DatasetDigest: digest, Cases: []CaseResult{}, Outputs: []ProcessorOutput{},
 		Conclusions: []Conclusion{}, Catalogs: catalogs}
+	for _, c := range cases {
+		if id, ok := c.Metadata["episode_id"].(string); ok {
+			index := episodeIndex(&r, id)
+			r.Episodes[index].CaseIDs = append(r.Episodes[index].CaseIDs, c.ID)
+		}
+	}
+	if len(r.Episodes) > 0 && effective.Plan.Mode == "invoke" {
+		target, lookupErr := Lookup(d, effective.Plan.Subject, "adapter")
+		if lookupErr != nil {
+			return Run{}, planError(lookupErr)
+		}
+		if filepath.Ext(target.Path) == ".py" {
+			if target.Descriptor["session_lifecycle"] != true {
+				return Run{}, planError(errors.New("Episode subject requires session lifecycle"))
+			}
+		} else if target.Descriptor["type"] != "seven-workspace" {
+			return Run{}, planError(errors.New("Episode requires session-capable subject"))
+		}
+	}
+	r.DatasetRevision = revision
 	if err = e.snapshot(&r); err != nil {
 		return Run{}, err
 	}
@@ -153,6 +185,7 @@ func (e *Engine) EvaluateExisting(ctx context.Context, r *Run, c Case, result Su
 	if len(result.Contexts) > 0 {
 		cr.Evidence = append(cr.Evidence, Evidence{ID: c.ID + ":contexts", Kind: "retrieval", Value: result.Contexts})
 	}
+	cr.Evidence = append(cr.Evidence, structuredEvidence(c.ID, result)...)
 	subjectStatus, subjectReason := cr.Status, cr.Reason
 	if c.Metadata["seven_eval_evidence_state"] == "incomplete" {
 		subjectStatus, subjectReason = "incomplete", "evidence_missing"
@@ -272,6 +305,18 @@ func catalogContains(value any, id string) bool {
 	return false
 }
 func (e *Engine) readCases(d Discovery, p Plan) ([]Case, string, error) {
+	cases, digest, err := e.readInputCases(d, p)
+	if err != nil {
+		return nil, "", err
+	}
+	expanded, err := expandEpisodes(cases)
+	return expanded, digest, err
+}
+func (e *Engine) readInputCases(d Discovery, p Plan) ([]Case, string, error) {
+	if p.Source != "" {
+		cases, revision, err := e.readSource(d, p)
+		return cases, revision.Digest, err
+	}
 	a, err := Lookup(d, p.Dataset, "dataset")
 	if err != nil {
 		return nil, "", err
@@ -306,8 +351,11 @@ func (e *Engine) readCases(d Discovery, p Plan) ([]Case, string, error) {
 		if err = protocol.Validate("case", raw); err != nil {
 			return nil, "", fmt.Errorf("dataset line %d: %w", line, err)
 		}
-		if p.Mode == "replay" {
-			if _, ok := raw["response"]; !ok {
+		if err = validateCaseReferences(raw); err != nil {
+			return nil, "", fmt.Errorf("dataset line %d: %w", line, err)
+		}
+		if p.Mode == "replay" && raw["episode"] == nil {
+			if _, ok := raw["response"]; !ok && raw["result"] == nil {
 				return nil, "", fmt.Errorf("dataset line %d: replay requires response field", line)
 			}
 		}
@@ -358,7 +406,10 @@ func (e *Engine) extension(ctx context.Context, r *Run, ref, kind, method string
 	if err != nil {
 		return err
 	}
-	params := map[string]any{"context": input}
+	params := map[string]any{"context": input, "asset_id": a.ID}
+	if c, ok := input.(map[string]any); ok {
+		c["parameters"] = r.Effective.Plan.Parameters
+	}
 	if a.Source == "local" {
 		p, err := SafePath(e.Root, a.Path)
 		if err != nil {
@@ -394,10 +445,39 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 			break
 		}
 		cr := CaseResult{Case: c, Status: "completed", Attempt: 0, Evidence: []Evidence{}, Metrics: []Metric{}}
+		err = nil
 		op, stop := context.WithTimeout(ctx, time.Duration(r.Effective.Plan.TimeoutSeconds)*time.Second)
+		episodeID, _ := c.Metadata["episode_id"].(string)
+		if episodeID != "" {
+			index := episodeIndex(&r, episodeID)
+			if r.Episodes[index].Status == "partial" {
+				stop()
+				continue
+			}
+			if r.Effective.Plan.Mode == "invoke" && r.Episodes[index].Session == nil {
+				r.Episodes[index].Session, err = e.createSubjectSession(op, &r)
+				if err != nil {
+					r.Episodes[index].Status = "partial"
+				}
+				if err == nil {
+					if saveErr := e.Store.Commit(&r, "episode.session.created", map[string]any{"episode_id": episodeID}); saveErr != nil {
+						stop()
+						return r, saveErr
+					}
+				}
+			}
+			op = context.WithValue(op, subjectSessionKey{}, r.Episodes[index].Session)
+		}
 		if r.Effective.Plan.Mode == "replay" {
 			cr.Result = SubjectResult{Response: c.Response, Contexts: c.Contexts}
-		} else {
+			if c.Result != nil {
+				cr.Result = *c.Result
+			}
+			if c.Metadata["seven_eval_subject_status"] == "error" {
+				cr.Status = "error"
+				cr.Reason = "subject_error"
+			}
+		} else if err == nil {
 			cr.Result, err = e.invoke(op, &r, c)
 		}
 		stop()
@@ -415,6 +495,7 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 		if len(cr.Result.Contexts) > 0 {
 			cr.Evidence = append(cr.Evidence, Evidence{ID: c.ID + ":contexts", Kind: "retrieval", Value: cr.Result.Contexts})
 		}
+		cr.Evidence = append(cr.Evidence, structuredEvidence(c.ID, cr.Result)...)
 		for _, ref := range r.Effective.Evaluators {
 			if ctx.Err() != nil {
 				break
@@ -447,12 +528,28 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 		}
 		cr.RedactionApplied = before != Digest(cr)
 		r.Cases = append(r.Cases, cr)
+		if episodeID != "" {
+			index := episodeIndex(&r, episodeID)
+			r.Episodes[index].Completed++
+			if subjectStatus != "completed" {
+				r.Episodes[index].Status = "partial"
+			}
+		}
 		r.Completed = len(r.Cases)
 		if err = e.Store.Commit(&r, "case.completed", cr); err != nil {
 			return r, err
 		}
 	}
 	cancelled := ctx.Err() != nil
+	for i := range r.Episodes {
+		if r.Episodes[i].Status == "running" {
+			if cancelled {
+				r.Episodes[i].Status = "cancelled"
+			} else {
+				r.Episodes[i].Status = "completed"
+			}
+		}
+	}
 	r.Status = "processing"
 	if err = e.Store.Commit(&r, "run.processing", nil); err != nil {
 		return r, err
@@ -474,7 +571,7 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 	for _, ref := range r.Effective.Processors {
 		ensureGrace()
 		var output ProcessorOutput
-		input := map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest}
+		input := map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "episodes": r.Episodes}
 		er := e.extension(finalCtx, &r, ref, "processor", "processor/process", input, &output)
 		if er == nil {
 			er = protocol.Validate("processor_output", output)
@@ -517,6 +614,42 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 			}
 		}
 	}
+	if r.Completed < r.Total && r.Status == "completed" {
+		r.Status = "partial"
+		r.Message = "Episode stopped; remaining turns were not invoked"
+	}
+	if r.Effective.Plan.Parameters["cleanup_sessions"] == true {
+		for _, episode := range r.Episodes {
+			if episode.Session != nil {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Duration(r.Effective.Plan.TimeoutSeconds)*time.Second)
+				a, cleanupErr := e.asset(&r, r.Effective.Plan.Subject, "adapter")
+				if cleanupErr == nil {
+					path, pathErr := SafePath(e.Root, a.Path)
+					cleanupErr = pathErr
+					if cleanupErr == nil {
+						var ignored any
+						cleanupErr = e.Worker.Call(cleanupCtx, "subject/cleanup", map[string]any{"path": path, "context": map[string]any{"session": episode.Session}}, &ignored)
+					}
+				}
+				cleanupCancel()
+				if cleanupErr != nil {
+					if r.Status != "cancelled" {
+						r.Status = "partial"
+					}
+					r.Message = "Session cleanup did not complete; audit evidence retained"
+				}
+			}
+		}
+	}
+	for i := range r.Episodes {
+		if r.Episodes[i].Status == "running" {
+			if cancelled {
+				r.Episodes[i].Status = "cancelled"
+			} else {
+				r.Episodes[i].Status = "completed"
+			}
+		}
+	}
 	if b, er := json.Marshal(e.redactForRun(&r, r)); er == nil {
 		_ = decodeJSON(b, &r)
 	}
@@ -536,7 +669,7 @@ func (e *Engine) invoke(ctx context.Context, r *Run, c Case) (SubjectResult, err
 		if err != nil {
 			return result, err
 		}
-		err = e.Worker.Call(ctx, "subject/invoke", map[string]any{"path": path, "context": map[string]any{"inputs": c.Inputs}}, &result)
+		err = e.Worker.Call(ctx, "subject/invoke", map[string]any{"path": path, "context": map[string]any{"inputs": c.Inputs, "session": ctx.Value(subjectSessionKey{})}}, &result)
 		if err == nil {
 			err = protocol.Validate("subject_result", result)
 		}
@@ -549,6 +682,9 @@ func (e *Engine) invoke(ctx context.Context, r *Run, c Case) (SubjectResult, err
 	}
 	if err = ReadDocument(p, &cfg); err != nil {
 		return result, err
+	}
+	if cfg.Type == "seven-workspace" {
+		return invokeSeven(ctx, cfg, c)
 	}
 	u, err := url.Parse(cfg.Endpoint)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
@@ -627,6 +763,26 @@ func (e *Engine) invoke(ctx context.Context, r *Run, c Case) (SubjectResult, err
 		result.Usage, ok = v.(map[string]any)
 		if !ok {
 			return result, errors.New("usage must be object")
+		}
+	}
+	for _, mapping := range []struct {
+		path   string
+		target any
+	}{{cfg.RetrievalPath, &result.Retrieval}, {cfg.ToolsPath, &result.Tools}, {cfg.CitationsPath, &result.Citations}} {
+		path, target := mapping.path, mapping.target
+		if path == "" {
+			continue
+		}
+		value, mappingErr := selectValue(raw, path)
+		if mappingErr != nil {
+			return result, mappingErr
+		}
+		encoded, mappingErr := json.Marshal(value)
+		if mappingErr != nil {
+			return result, mappingErr
+		}
+		if mappingErr = decodeJSON(encoded, target); mappingErr != nil {
+			return result, errors.New("invalid structured evidence")
 		}
 	}
 	latency := float64(time.Since(start).Microseconds()) / 1000

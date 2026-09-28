@@ -2,6 +2,8 @@ import type { Asset, BasicSummary, CaseResult, Run } from "./types";
 export const assetKinds: Record<string, string> = {
   plan: "计划",
   dataset: "数据集",
+  source: "数据源",
+  mapping: "字段映射",
   adapter: "适配器",
   evaluator: "评测器",
   processor: "处理器",
@@ -10,6 +12,21 @@ export const assetKinds: Record<string, string> = {
   preset: "预设",
 };
 export const metricNames: Record<string, string> = {
+  "agent.call.completed":"调用完成",
+  "tool.expected":"期望工具匹配",
+  "tool.arguments":"工具参数匹配",
+  "tool.execution":"工具执行成功",
+  "tool.repeated":"重复工具调用次数",
+  "agent.effect":"已声明效果匹配",
+  "rag.recall": "检索召回率",
+  "rag.precision": "检索精确率",
+  "rag.mrr": "首个相关结果排名倒数",
+  "rag.ndcg": "等级相关性排名",
+  "rag.map": "平均精确率",
+  "rag.faithfulness": "回答忠实度（模型评分）",
+  "citation.resolvable": "引用文档可解析",
+  "citation.retrieved": "引用属于检索结果",
+  "citation.range": "引用位置有效",
   "output.present": "回答存在性",
   "output.exact": "参考答案匹配",
   "output.schema": "输出格式",
@@ -18,6 +35,10 @@ export const metricNames: Record<string, string> = {
   "usage.cost": "调用费用",
   "evaluation.error": "评测执行",
 };
+export function metricLabel(id: string, parameters?: unknown): string {
+  const k=parameters && typeof parameters==="object" ? (parameters as {k?:unknown}).k : undefined;
+  return (metricNames[id] ?? id) + (typeof k==="number" ? ` @${k}` : "");
+}
 export const statusNames: Record<string, string> = {
   valid: "可用",
   invalid: "需处理",

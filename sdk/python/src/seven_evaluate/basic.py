@@ -128,10 +128,16 @@ def process(ctx):
     failure_ids = [c["case"]["id"] for c in cases if c["status"] != "completed" or
                    any(m["status"] == "observed" and m["value"] is False for m in c["metrics"])]
     window_stats = process_window(ctx) if ctx.get("window") else None
+    episodes=[]
+    for episode in ctx.get("episodes") or []:
+        subset=[c for c in cases if c["case"].get("metadata",{}).get("episode_id")==episode["id"]]
+        aggregate=process({"cases":subset,"total":len(episode["case_ids"]),"input_digest":ctx["input_digest"]})["data"]
+        episodes.append({"id":episode["id"],"status":episode["status"],**aggregate})
     if window_stats is not None:
         scored = window_stats['scored']
     return {"processor": "builtin.basic-summary@1",
             "data": {"total": ctx["total"], "processed": len(cases), "scored": scored,
+                     **({"episodes":episodes} if episodes else {}),
                      **({"window": window_stats} if window_stats is not None else {}),
                      "pending": max(0, ctx["total"]-len(cases)),
                      "coverage": scored/ctx["total"] if ctx["total"] else None,

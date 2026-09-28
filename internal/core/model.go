@@ -33,17 +33,20 @@ type Discovery struct {
 	Assets  []Asset `json:"assets"`
 }
 type Plan struct {
-	SchemaVersion  string        `json:"schema_version" yaml:"schema_version"`
-	ID             string        `json:"id" yaml:"id"`
-	Preset         string        `json:"preset" yaml:"preset"`
-	Mode           string        `json:"mode" yaml:"mode"`
-	Dataset        string        `json:"dataset" yaml:"dataset"`
-	Subject        string        `json:"subject,omitempty" yaml:"subject,omitempty"`
-	Evaluators     *[]string     `json:"evaluators" yaml:"evaluators"`
-	Processors     *[]string     `json:"processors" yaml:"processors"`
-	Conclusions    *[]string     `json:"conclusions" yaml:"conclusions"`
-	TimeoutSeconds int           `json:"timeout_seconds" yaml:"timeout_seconds"`
-	Stream         *StreamConfig `json:"stream,omitempty" yaml:"stream,omitempty"`
+	SchemaVersion  string         `json:"schema_version" yaml:"schema_version"`
+	ID             string         `json:"id" yaml:"id"`
+	Preset         string         `json:"preset" yaml:"preset"`
+	Mode           string         `json:"mode" yaml:"mode"`
+	Dataset        string         `json:"dataset,omitempty" yaml:"dataset"`
+	Source         string         `json:"source,omitempty" yaml:"source,omitempty"`
+	Mapping        string         `json:"mapping,omitempty" yaml:"mapping,omitempty"`
+	Parameters     map[string]any `json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	Subject        string         `json:"subject,omitempty" yaml:"subject,omitempty"`
+	Evaluators     *[]string      `json:"evaluators" yaml:"evaluators"`
+	Processors     *[]string      `json:"processors" yaml:"processors"`
+	Conclusions    *[]string      `json:"conclusions" yaml:"conclusions"`
+	TimeoutSeconds int            `json:"timeout_seconds" yaml:"timeout_seconds"`
+	Stream         *StreamConfig  `json:"stream,omitempty" yaml:"stream,omitempty"`
 }
 
 // StreamConfig is intentionally small: the plan owns scoring policy while the
@@ -75,7 +78,24 @@ type Case struct {
 	References map[string]any `json:"references,omitempty"`
 	Response   any            `json:"response,omitempty"`
 	Contexts   []any          `json:"contexts,omitempty"`
+	Result     *SubjectResult `json:"result,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
+	Episode    *Episode       `json:"episode,omitempty"`
+}
+type Turn struct {
+	ID   string `json:"id"`
+	Case Case   `json:"case"`
+}
+type Episode struct {
+	ID    string `json:"id"`
+	Turns []Turn `json:"turns"`
+}
+type EpisodeResult struct {
+	ID        string   `json:"id"`
+	Status    string   `json:"status"`
+	Session   any      `json:"session,omitempty"`
+	CaseIDs   []string `json:"case_ids"`
+	Completed int      `json:"completed"`
 }
 type Evidence struct {
 	ID    string `json:"id"`
@@ -83,11 +103,39 @@ type Evidence struct {
 	Value any    `json:"value"`
 }
 type SubjectResult struct {
-	Response  any            `json:"response"`
-	Contexts  []any          `json:"contexts,omitempty"`
-	Usage     map[string]any `json:"usage,omitempty"`
-	LatencyMS *float64       `json:"latency_ms,omitempty"`
+	Response  any                 `json:"response"`
+	Contexts  []any               `json:"contexts,omitempty"`
+	Usage     map[string]any      `json:"usage,omitempty"`
+	LatencyMS *float64            `json:"latency_ms,omitempty"`
+	Retrieval []RetrievalDocument `json:"retrieval,omitempty"`
+	Tools     []ToolEvidence      `json:"tools,omitempty"`
+	Citations []Citation          `json:"citations,omitempty"`
+	Trace     []any               `json:"trace,omitempty"`
 }
+
+// MarshalJSON preserves provided empty evidence separately from absent evidence.
+func (r SubjectResult) MarshalJSON() ([]byte, error) {
+	type plain SubjectResult
+	b, err := json.Marshal(plain(r))
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]any
+	if err = decodeJSON(b, &fields); err != nil {
+		return nil, err
+	}
+	if r.Retrieval != nil {
+		fields["retrieval"] = r.Retrieval
+	}
+	if r.Tools != nil {
+		fields["tools"] = r.Tools
+	}
+	if r.Citations != nil {
+		fields["citations"] = r.Citations
+	}
+	return json.Marshal(fields)
+}
+
 type Metric struct {
 	ID           string         `json:"id"`
 	MetricID     string         `json:"metric_id"`
@@ -121,21 +169,50 @@ type Conclusion struct {
 	Summary string `json:"summary"`
 }
 type Run struct {
-	SchemaVersion string            `json:"schema_version"`
-	ID            string            `json:"id"`
-	Package       Package           `json:"package"`
-	CreatedAt     time.Time         `json:"created_at"`
-	Status        string            `json:"status"`
-	Message       string            `json:"message,omitempty"`
-	Total         int               `json:"total"`
-	Completed     int               `json:"completed"`
-	Effective     Effective         `json:"effective"`
-	DatasetDigest string            `json:"dataset_digest"`
-	Cases         []CaseResult      `json:"cases"`
-	Outputs       []ProcessorOutput `json:"outputs"`
-	Conclusions   []Conclusion      `json:"conclusions"`
-	Catalogs      map[string]any    `json:"catalogs"`
-	Scope         *WindowScope      `json:"scope,omitempty"`
+	SchemaVersion   string            `json:"schema_version"`
+	ID              string            `json:"id"`
+	Package         Package           `json:"package"`
+	CreatedAt       time.Time         `json:"created_at"`
+	Status          string            `json:"status"`
+	Message         string            `json:"message,omitempty"`
+	Total           int               `json:"total"`
+	Completed       int               `json:"completed"`
+	Effective       Effective         `json:"effective"`
+	DatasetDigest   string            `json:"dataset_digest"`
+	Cases           []CaseResult      `json:"cases"`
+	Outputs         []ProcessorOutput `json:"outputs"`
+	Conclusions     []Conclusion      `json:"conclusions"`
+	Catalogs        map[string]any    `json:"catalogs"`
+	Scope           *WindowScope      `json:"scope,omitempty"`
+	DatasetRevision *DatasetRevision  `json:"dataset_revision,omitempty"`
+	Episodes        []EpisodeResult   `json:"episodes,omitempty"`
+}
+
+// DatasetRevision freezes input provenance independently of a transport.
+type DatasetRevision struct {
+	SourceID       string            `json:"source_id"`
+	SourceVersion  string            `json:"source_version"`
+	MappingID      string            `json:"mapping_id,omitempty"`
+	MappingVersion string            `json:"mapping_version,omitempty"`
+	Files          map[string]string `json:"files"`
+	Digest         string            `json:"digest"`
+}
+type RetrievalDocument struct {
+	ID    string   `json:"id"`
+	Text  string   `json:"text"`
+	Score *float64 `json:"score,omitempty"`
+}
+type ToolEvidence struct {
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments,omitempty"`
+	Status    string         `json:"status"`
+	Result    any            `json:"result,omitempty"`
+}
+type Citation struct {
+	DocumentID string `json:"document_id"`
+	Start      *int   `json:"start,omitempty"`
+	End        *int   `json:"end,omitempty"`
 }
 type WindowScope struct {
 	StatisticsAvailable bool           `json:"statistics_available"`
@@ -210,13 +287,17 @@ type Event struct {
 	Data     any             `json:"data,omitempty"`
 }
 type HTTPConfig struct {
-	ID           string         `json:"id" yaml:"id"`
-	Version      string         `json:"version" yaml:"version"`
-	Type         string         `json:"type" yaml:"type"`
-	Endpoint     string         `json:"endpoint" yaml:"endpoint"`
-	Request      map[string]any `json:"request" yaml:"request"`
-	ResponsePath string         `json:"response_path" yaml:"response_path"`
-	ContextsPath string         `json:"contexts_path" yaml:"contexts_path"`
-	UsagePath    string         `json:"usage_path" yaml:"usage_path"`
-	AuthEnv      string         `json:"auth_env" yaml:"auth_env"`
+	ID            string         `json:"id" yaml:"id"`
+	Version       string         `json:"version" yaml:"version"`
+	Type          string         `json:"type" yaml:"type"`
+	Endpoint      string         `json:"endpoint" yaml:"endpoint"`
+	Request       map[string]any `json:"request" yaml:"request"`
+	ResponsePath  string         `json:"response_path" yaml:"response_path"`
+	ContextsPath  string         `json:"contexts_path" yaml:"contexts_path"`
+	UsagePath     string         `json:"usage_path" yaml:"usage_path"`
+	AuthEnv       string         `json:"auth_env" yaml:"auth_env"`
+	RetrievalPath string         `json:"retrieval_path" yaml:"retrieval_path"`
+	ToolsPath     string         `json:"tools_path" yaml:"tools_path"`
+	CitationsPath string         `json:"citations_path" yaml:"citations_path"`
+	WorkspaceID   string         `json:"workspace_id" yaml:"workspace_id"`
 }

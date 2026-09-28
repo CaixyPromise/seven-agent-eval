@@ -10,6 +10,8 @@ import { StatusBadge } from "../../components/StatusBadge";
 const filters = [
   ["all", "全部"],
   ["dataset", "数据集"],
+  ["source", "数据源"],
+  ["mapping", "字段映射"],
   ["adapter", "适配器"],
   ["evaluator", "评测器"],
   ["processor", "处理器"],

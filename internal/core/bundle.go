@@ -33,6 +33,9 @@ const reportTemplate = `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <section><h2>Conclusions / 结论</h2>{{range .Conclusions}}<p><strong>{{.Code}}</strong> — {{.Summary}}</p>{{else}}<p>Conclusions disabled or unavailable.</p>{{end}}</section>
 <section><h2>Statistics / 统计</h2>{{range .Outputs}}<h3>{{.Processor}}</h3><pre>{{pretty .Data}}</pre>{{else}}<p>Processors disabled or unavailable.</p>{{end}}</section>
 <section><h2>Cases / 样本证据</h2>{{range .Cases}}<details><summary>{{.Case.ID}} · {{.Status}} · {{.Reason}}</summary><h4>Input</h4><pre>{{pretty .Case.Inputs}}</pre><h4>Reference</h4><pre>{{pretty .Case.References}}</pre><h4>Response</h4><pre>{{pretty .Result.Response}}</pre><h4>Contexts</h4><pre>{{pretty .Result.Contexts}}</pre><table><tr><th>Metric</th><th>Status</th><th>Value</th><th>Reason</th></tr>{{range .Metrics}}<tr><td>{{.MetricID}}</td><td>{{.Status}}</td><td>{{pretty .Value}}</td><td>{{.Reason}}</td></tr>{{end}}</table></details>{{end}}</section>
+<section><h2>Structured Evidence / 检索、工具与引用</h2>{{range .Cases}}<details><summary>{{.Case.ID}}</summary><pre>{{pretty .Result}}</pre></details>{{end}}</section>
+{{with .DatasetRevision}}<section><h2>Dataset Revision / 数据版本</h2><pre>{{pretty .}}</pre></section>{{end}}
+{{with .Episodes}}<section><h2>Episodes / 有状态轮次</h2><pre>{{pretty .}}</pre><p>只展示已保留的 Turn 结果；计划轮次与已处理轮次不同表示部分执行，不补造后续回答。</p></section>{{end}}
 <section><h2>Catalogs / 码表</h2><pre>{{pretty .Catalogs}}</pre></section><section><h2>Effective plan / 执行配置</h2><pre>{{pretty .Effective}}</pre></section>
 <footer>Seven Eval · self-contained report · {{.ID}}</footer></html>`
 

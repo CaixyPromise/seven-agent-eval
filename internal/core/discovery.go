@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"seven-agent-eval/protocol"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -54,13 +55,20 @@ func Discover(ctx context.Context, root string, worker Worker) (Discovery, error
 		return d, e
 	}
 	d.Assets = []Asset{
+		{Kind: "preset", ID: "builtin.agent-basic@1", Version: "1", Source: "builtin", Path: "builtin/agent", Status: "valid"},
+		{Kind: "evaluator", ID: "agent", Version: "1", Source: "builtin", Path: "builtin/agent", Status: "valid"},
+		{Kind: "conclusion", ID: "agent-conclusion", Version: "1", Source: "builtin", Path: "builtin/agent", Status: "valid"},
+		{Kind: "preset", ID: "builtin.rag-basic@1", Version: "1", Source: "builtin", Path: "builtin/rag", Status: "valid"},
+		{Kind: "conclusion", ID: "rag-conclusion", Version: "1", Source: "builtin", Path: "builtin/rag", Status: "valid"},
+		{Kind: "evaluator", ID: "rag", Version: "1", Source: "builtin", Path: "builtin/rag", Status: "valid"},
+		{Kind: "evaluator", ID: "rag-judge", Version: "1", Source: "builtin", Path: "builtin/rag", Status: "valid", Descriptor: map[string]any{"execution_class": "judge"}},
 		{Kind: "preset", ID: "builtin.basic@1", Version: "1", Source: "builtin", Path: "builtin/basic", Status: "valid"},
 		{Kind: "evaluator", ID: "basic", Version: "1", Source: "builtin", Path: "builtin/basic", Status: "valid"},
 		{Kind: "processor", ID: "basic-summary", Version: "1", Source: "builtin", Path: "builtin/basic", Status: "valid"},
 		{Kind: "conclusion", ID: "basic-conclusion", Version: "1", Source: "builtin", Path: "builtin/basic", Status: "valid"},
 	}
-	kinds := map[string]string{"plans": "plan", "datasets": "dataset", "adapters": "adapter", "evaluators": "evaluator", "processors": "processor", "conclusions": "conclusion", "catalogs": "catalog"}
-	for _, dir := range []string{"plans", "datasets", "adapters", "evaluators", "processors", "conclusions", "catalogs"} {
+	kinds := map[string]string{"sources": "source", "mappings": "mapping", "plans": "plan", "datasets": "dataset", "adapters": "adapter", "evaluators": "evaluator", "processors": "processor", "conclusions": "conclusion", "catalogs": "catalog"}
+	for _, dir := range []string{"sources", "mappings", "plans", "datasets", "adapters", "evaluators", "processors", "conclusions", "catalogs"} {
 		base := filepath.Join(root, dir)
 		if _, e := os.Lstat(base); os.IsNotExist(e) {
 			continue
@@ -154,6 +162,20 @@ func Discover(ctx context.Context, root string, worker Worker) (Discovery, error
 						delete(doc, "digest")
 						err = protocol.Validate("plan", doc)
 						doc["digest"] = Hash(b)
+					}
+					if a.Kind == "source" || a.Kind == "mapping" {
+						delete(doc, "digest")
+						err = protocol.Validate(a.Kind, doc)
+						doc["digest"] = Hash(b)
+						if err == nil && a.Kind == "source" {
+							for _, key := range []string{"path", "corpus", "queries", "qrels", "run", "case"} {
+								if rel, ok := doc[key].(string); ok {
+									if _, err = SafePath(root, rel); err != nil {
+										break
+									}
+								}
+							}
+						}
 					}
 					if a.Kind == "dataset" {
 						source, ok := doc["source"].(string)
@@ -259,11 +281,28 @@ func Resolve(root string, d Discovery, id string) (Effective, error) {
 	if out.Plan.Mode != "invoke" && out.Plan.Mode != "replay" && out.Plan.Mode != "stream" {
 		return out, errors.New("plan mode must be invoke, replay or stream")
 	}
+	if k, ok := out.Plan.Parameters["k"]; ok {
+		var values []any
+		if list, ok := k.([]any); ok {
+			values = list
+		} else {
+			values = []any{k}
+		}
+		if len(values) == 0 {
+			return out, errors.New("k must contain positive integers")
+		}
+		for _, value := range values {
+			n, err := strconv.Atoi(fmt.Sprint(value))
+			if err != nil || n < 1 || n > 100000 {
+				return out, errors.New("k must contain positive integers up to 100000")
+			}
+		}
+	}
 	if out.Plan.Mode == "stream" {
 		if out.Plan.Stream == nil || (out.Plan.Stream.Unit != "trace" && out.Plan.Stream.Unit != "turn") {
 			return out, errors.New("stream plan requires unit trace or turn")
 		}
-		if out.Plan.Dataset != "" || out.Plan.Subject != "" {
+		if out.Plan.Dataset != "" || out.Plan.Subject != "" || out.Plan.Source != "" || out.Plan.Mapping != "" {
 			return out, errors.New("stream plan cannot define dataset or subject")
 		}
 		stream := out.Plan.Stream
@@ -291,13 +330,33 @@ func Resolve(root string, d Discovery, id string) (Effective, error) {
 		if (stream.JudgeSampleRate == nil) != (stream.JudgePerWindowBudget == nil) || (stream.JudgeSampleRate != nil && (*stream.JudgeSampleRate < 0 || *stream.JudgeSampleRate > 1 || *stream.JudgePerWindowBudget < 0)) {
 			return out, errors.New("judge sampling and budget must be configured together")
 		}
-	} else if _, e = Lookup(d, out.Plan.Dataset, "dataset"); e != nil {
-		return out, e
+	} else if out.Plan.Source != "" {
+		if out.Plan.Dataset != "" {
+			return out, errors.New("source and dataset are mutually exclusive")
+		}
+		if _, e = Lookup(d, out.Plan.Source, "source"); e != nil {
+			return out, e
+		}
+		if out.Plan.Mapping != "" {
+			if _, e = Lookup(d, out.Plan.Mapping, "mapping"); e != nil {
+				return out, e
+			}
+		}
+	} else {
+		if out.Plan.Mapping != "" {
+			return out, errors.New("mapping requires source")
+		}
+		if _, e = Lookup(d, out.Plan.Dataset, "dataset"); e != nil {
+			return out, e
+		}
 	}
 	if out.Plan.Mode == "invoke" {
 		target, err := Lookup(d, out.Plan.Subject, "adapter")
 		if err != nil {
 			return out, err
+		}
+		if out.Plan.Parameters["cleanup_sessions"] == true && target.Descriptor["session_cleanup"] != true {
+			return out, errors.New("Subject has no supported per-session cleanup; audit sessions are retained")
 		}
 		if filepath.Ext(target.Path) != ".py" {
 			var cfg HTTPConfig
@@ -308,7 +367,7 @@ func Resolve(root string, d Discovery, id string) (Effective, error) {
 			if err = ReadDocument(p, &cfg); err != nil {
 				return out, err
 			}
-			if cfg.Type != "http" || cfg.Endpoint == "" {
+			if (cfg.Type != "http" && cfg.Type != "seven-workspace") || cfg.Endpoint == "" {
 				return out, errors.New("HTTP adapter requires type:http and endpoint")
 			}
 		}
@@ -320,8 +379,20 @@ func Resolve(root string, d Discovery, id string) (Effective, error) {
 		return append([]string{}, (*ptr)...)
 	}
 	out.Evaluators = pick(out.Plan.Evaluators, "evaluator:basic")
+	if out.Plan.Preset == "builtin.rag-basic@1" && out.Plan.Evaluators == nil {
+		out.Evaluators = []string{"evaluator:basic", "evaluator:rag"}
+	}
 	out.Processors = pick(out.Plan.Processors, "processor:basic-summary")
+	if out.Plan.Preset == "builtin.agent-basic@1" && out.Plan.Evaluators == nil {
+		out.Evaluators = []string{"evaluator:basic", "evaluator:agent"}
+	}
 	out.Conclusions = pick(out.Plan.Conclusions, "conclusion:basic-conclusion")
+	if out.Plan.Preset == "builtin.agent-basic@1" && out.Plan.Conclusions == nil {
+		out.Conclusions = []string{"conclusion:agent-conclusion"}
+	}
+	if out.Plan.Preset == "builtin.rag-basic@1" && out.Plan.Conclusions == nil {
+		out.Conclusions = []string{"conclusion:rag-conclusion"}
+	}
 	for kind, refs := range map[string][]string{"evaluator": out.Evaluators, "processor": out.Processors, "conclusion": out.Conclusions} {
 		seen := map[string]bool{}
 		for _, r := range refs {

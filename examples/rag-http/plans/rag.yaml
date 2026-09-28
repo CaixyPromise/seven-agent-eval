@@ -1,0 +1,9 @@
+schema_version: evaluate.plan/v1
+id: rag
+mode: invoke
+preset: builtin.rag-basic@1
+source: source:questions
+mapping: mapping:questions
+subject: adapter:rag
+parameters:
+  k: [1, 5]

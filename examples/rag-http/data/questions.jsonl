@@ -1,0 +1,5 @@
+{"id":"correct","inputs":{"scenario":"correct","text":"七号文档是什么？"},"references":{"qrels":{"d1":2,"d2":1}}}
+{"id":"wrong-rank","inputs":{"scenario":"wrong-rank","text":"相关文档在哪？"},"references":{"qrels":{"d1":2,"d2":1}}}
+{"id":"missing-qrels","inputs":{"scenario":"correct","text":"没有参考的查询"},"references":{}}
+{"id":"empty-answer","inputs":{"scenario":"empty-answer","text":"空回答"},"references":{"qrels":{"d1":2}}}
+{"id":"bad-citation","inputs":{"scenario":"bad-citation","text":"引用检查"},"references":{"qrels":{"d1":2}}}

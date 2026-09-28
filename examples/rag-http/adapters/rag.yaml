@@ -1,0 +1,7 @@
+id: rag
+version: '1'
+type: http
+endpoint: http://127.0.0.1:7453/rag
+response_path: $.answer
+retrieval_path: $.retrieval
+citations_path: $.citations
