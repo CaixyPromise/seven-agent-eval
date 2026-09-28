@@ -1,0 +1,4 @@
+id: csv
+version: '1'
+format: csv
+path: data/cases.csv

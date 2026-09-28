@@ -42,6 +42,10 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(validator.is_valid({"kind":"case","value":{"inputs":"x"}}))
         invalid = basic.metric("a", "output.present", "error", 0)
         self.assertFalse(validator.is_valid({"kind":"metric","value":invalid}))
+        for source in [{"id":"s","version":"1","format":"jsonl"},
+                       {"id":"s","version":"1","format":"beir","queries":"q","qrels":"r"},
+                       {"id":"s","version":"1","format":"trec","queries":"q","qrels":"r"}]:
+            self.assertFalse(validator.is_valid({"kind":"source","value":source}))
     def test_missing_is_not_zero(self):
         out = basic.evaluate({"case":{"id":"x","inputs":"x"},"result":{},"status":"error"})
         self.assertEqual(out[0]["status"], "not_computable")

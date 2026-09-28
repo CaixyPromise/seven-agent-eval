@@ -1,0 +1,1 @@
+{"id":"q1","inputs":{"text":"question"},"references":{"qrels":{"d1":2,"d2":1}},"result":{"response":"","retrieval":[{"id":"d2","text":"two","score":2},{"id":"d1","text":"one","score":1}]},"metadata":{"split":"test"}}

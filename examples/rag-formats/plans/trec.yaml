@@ -1,0 +1,7 @@
+schema_version: evaluate.plan/v1
+id: trec
+mode: replay
+preset: builtin.rag-basic@1
+source: source:trec
+parameters:
+  k: [1, 5]

@@ -142,9 +142,9 @@ func (e *Engine) readSource(d Discovery, p Plan) ([]Case, DatasetRevision, error
 		if err = validateCaseReferences(obj); err != nil {
 			return fmt.Errorf("source row %d: %w", line, err)
 		}
-		if p.Mode == "replay" && obj["episode"] == nil {
-			if _, ok := obj["response"]; !ok && obj["result"] == nil {
-				return fmt.Errorf("source row %d: replay requires response", line)
+		if p.Mode == "replay" {
+			if err = validateReplayInput(obj); err != nil {
+				return fmt.Errorf("source row %d: %w", line, err)
 			}
 		}
 		b, er := json.Marshal(obj)

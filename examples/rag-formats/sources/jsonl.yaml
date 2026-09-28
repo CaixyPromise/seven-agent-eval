@@ -1,0 +1,4 @@
+id: jsonl
+version: '1'
+format: jsonl
+path: data/cases.jsonl

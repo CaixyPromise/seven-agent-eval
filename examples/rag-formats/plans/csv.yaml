@@ -1,0 +1,8 @@
+schema_version: evaluate.plan/v1
+id: csv
+mode: replay
+preset: builtin.rag-basic@1
+source: source:csv
+mapping: mapping:csv
+parameters:
+  k: [1, 5]

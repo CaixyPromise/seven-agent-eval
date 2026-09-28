@@ -6,6 +6,24 @@ import (
 	"strconv"
 )
 
+func validateReplayInput(raw map[string]any) error {
+	if episode, ok := raw["episode"].(map[string]any); ok {
+		turns, _ := episode["turns"].([]any)
+		for _, turn := range turns {
+			item, _ := turn.(map[string]any)
+			child, _ := item["case"].(map[string]any)
+			if err := validateReplayInput(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if _, ok := raw["response"]; !ok && raw["result"] == nil {
+		return errors.New("replay requires response or result on every Case/Turn")
+	}
+	return nil
+}
+
 func validateCaseReferences(raw map[string]any) error {
 	if episode, ok := raw["episode"].(map[string]any); ok {
 		turns, _ := episode["turns"].([]any)

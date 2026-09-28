@@ -1,0 +1,8 @@
+id: trec
+version: '1'
+format: trec
+queries: data/queries.jsonl
+corpus: data/corpus.jsonl
+qrels: data/trec.qrels
+run: data/run.txt
+split: test

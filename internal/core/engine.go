@@ -354,9 +354,9 @@ func (e *Engine) readInputCases(d Discovery, p Plan) ([]Case, string, error) {
 		if err = validateCaseReferences(raw); err != nil {
 			return nil, "", fmt.Errorf("dataset line %d: %w", line, err)
 		}
-		if p.Mode == "replay" && raw["episode"] == nil {
-			if _, ok := raw["response"]; !ok && raw["result"] == nil {
-				return nil, "", fmt.Errorf("dataset line %d: replay requires response field", line)
+		if p.Mode == "replay" {
+			if err = validateReplayInput(raw); err != nil {
+				return nil, "", fmt.Errorf("dataset line %d: %w", line, err)
 			}
 		}
 		var c Case

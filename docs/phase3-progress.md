@@ -4,8 +4,8 @@
 
 ## 范围与状态
 
-- Checkpoint 1（已验证，准备提交）：Source/Mapping、JSONL HTTP RAG、确定性指标、页面及独立结果包。
-- Checkpoint 2（自动验收通过，准备归档）：CSV/TREC/BEIR、可选 HTTP judge。
+- Checkpoint 1（已提交 `a20939b`）：Source/Mapping、JSONL HTTP RAG、确定性指标、页面及独立结果包。
+- Checkpoint 2（自动验收通过，本次归档）：CSV/TREC/BEIR、可选 HTTP judge。
 - Checkpoint 3（受控协议与页面流程通过，视觉归档中）：Seven Workspace SSE、历史导入、Episode。
 
 共享 schema、Subject lifecycle 和执行核心在同一次连续实施中完成；checkpoint 是可演示交付节点，不声称各节点的公共代码彼此独立。本轮用户确认先完成受控验收，真实 Seven 环境稍后提供。

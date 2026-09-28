@@ -1,0 +1,13 @@
+id: csv
+version: '1'
+fields:
+  id: $.id
+  inputs: $.inputs
+  references: $.references
+  result: $.result
+  metadata: $.metadata
+conversions:
+  inputs: json
+  references: json
+  result: json
+  metadata: json

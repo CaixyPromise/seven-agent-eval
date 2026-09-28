@@ -1,0 +1,8 @@
+id: beir
+version: '1'
+format: beir
+queries: data/queries.jsonl
+corpus: data/corpus.jsonl
+qrels: data/beir.tsv
+run: data/run.txt
+split: test
