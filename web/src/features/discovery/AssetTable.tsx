@@ -5,7 +5,7 @@ import Segmented from "antd/es/segmented";
 import Table, { type ColumnsType } from "antd/es/table";
 import { Search } from "lucide-react";
 import type { Asset } from "../../domain/types";
-import { assetKinds } from "../../domain/presentation";
+import { assetIdentity, assetKinds } from "../../domain/presentation";
 import { StatusBadge } from "../../components/StatusBadge";
 const filters = [
   ["all", "全部"],
@@ -120,7 +120,7 @@ export function AssetTable({
         className="domain-table"
         columns={columns}
         dataSource={filtered}
-        rowKey={(a) => a.kind + ":" + a.source + ":" + a.path}
+        rowKey={assetIdentity}
         scroll={{ x: 680 }}
         locale={{ emptyText: "没有匹配的资产" }}
         pagination={{

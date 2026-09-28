@@ -37,15 +37,21 @@ export function AssetDrawer({
       {
         key: "mode",
         label: "评测方式",
-        children: descriptor?.mode === "invoke" ? "调用目标" : "已有回答",
+        children: descriptor?.mode === "invoke" ? "调用目标" : descriptor?.mode === "stream" ? "持续评分" : "已有回答",
       },
       {
         key: "dataset",
-        label: "数据集",
-        children: String(descriptor?.dataset ?? "未指定"),
+        label: descriptor?.source ? "数据源" : "数据集",
+        children: String(descriptor?.source ?? descriptor?.dataset ?? (descriptor?.mode === "stream" ? "生产事件" : "未指定")),
       },
       { key: "recipe", label: "评测配方", children: recipeName(asset) },
     );
+  if (asset.kind === "plan" && descriptor?.mapping)
+    items.push({ key: "mapping", label: "字段映射", children: String(descriptor.mapping) });
+  if (asset.kind === "source")
+    items.push({ key: "format", label: "数据格式", children: String(descriptor?.format ?? "未提供") });
+  if (asset.kind === "mapping")
+    items.push({ key: "fields", label: "目标字段数", children: String(descriptor?.field_count ?? "—") });
   return (
     <Dialog title={asset.id} drawer onClose={onClose}>
       <div className="drawer-body">

@@ -1,4 +1,4 @@
-.PHONY: setup build test demo acceptance-live browser-fixture
+.PHONY: setup build test demo acceptance-live acceptance-rag acceptance-seven browser-fixture
 setup:
 	uv sync --locked --project sdk/python --python 3.11
 	pnpm --dir web install --frozen-lockfile
@@ -16,3 +16,7 @@ acceptance-live: build
 	uv run --project sdk/python python scripts/live_acceptance.py
 browser-fixture: build
 	uv run --project sdk/python python scripts/browser_fixture.py prepare
+acceptance-rag: build
+	uv run --project sdk/python python scripts/phase3_acceptance.py
+acceptance-seven: build
+	uv run --project sdk/python python scripts/seven_acceptance.py

@@ -1,0 +1,1 @@
+{"final_status":"completed","assistant_text":"已找到示例文档。","tool_executions":[{"tool_call_id":"historical-search","tool_name":"search","status":"success","tool_arguments_parsed_json":{"query":"示例文档"},"tool_result_json":{"found":true}}]}

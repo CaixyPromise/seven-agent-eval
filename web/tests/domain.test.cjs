@@ -5,10 +5,17 @@ const root = process.env.SEVEN_WEB_TEST_BUILD;
 const { responseError, errorCopy, safeErrorCode, ProductError } = require(
   join(root, "api/errors.js"),
 );
-const { recipeName, isAnomaly, basicSummary, pretty } = require(
+const { assetIdentity, recipeName, isAnomaly, basicSummary, pretty } = require(
   join(root, "domain/presentation.js"),
 );
 const { evaluationApi } = require(join(root, "api/client.js"));
+
+test("shared builtin paths keep distinct asset row identities", () => {
+  const rag={kind:"evaluator",source:"builtin",id:"rag",version:"1",path:"builtin/rag"};
+  assert.notEqual(assetIdentity(rag),assetIdentity({...rag,id:"rag-judge"}));
+  assert.notEqual(assetIdentity(rag),assetIdentity({...rag,version:"2"}));
+  assert.notEqual(assetIdentity(rag),assetIdentity({...rag,path:"evaluators/duplicate.py"}));
+});
 
 test("unreviewed backend and upstream messages never become error copy", () => {
   const poison = "secret-token /private/server SQL stack trace";

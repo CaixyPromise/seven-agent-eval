@@ -8,7 +8,10 @@ def evaluate(ctx):
     cid=ctx["case"]["id"];refs=ctx["case"].get("references") or {};tools=ctx["result"].get("tools")
     out=[]
     def emit(mid,status,value=None,reason=""):
-        m=metric(cid,mid,status,value,reason);m["evaluator"]="builtin.agent-basic@1";out.append(m)
+        m=metric(cid,mid,status,value,reason);m["evaluator"]="builtin.agent-basic@1"
+        if tools is not None and (mid.startswith("tool.") or mid=="agent.effect"):
+            m["evidence_refs"]=[cid+":tools"]
+        out.append(m)
     emit("agent.call.completed","observed",ctx.get("status")=="completed")
     expected=refs.get("expected_tools")
     if expected is None:
@@ -21,7 +24,21 @@ def evaluate(ctx):
         emit("tool.expected","observed",all(any(t["name"]==e["name"] for t in tools) for e in expected))
         parameter_rules=[e for e in expected if "arguments" in e]
         if parameter_rules:
-            emit("tool.arguments","observed",all(any(t["name"]==e["name"] and json_equal(t.get("arguments",{}),e["arguments"]) for t in tools) for e in parameter_rules))
+            checks=[]
+            for rule in parameter_rules:
+                matches=[t for t in tools if t["name"]==rule["name"]]
+                if any(t.get("arguments") is not None and json_equal(t["arguments"],rule["arguments"]) for t in matches):
+                    checks.append(True)
+                elif any(t.get("arguments") is None for t in matches):
+                    checks.append(None)
+                else:
+                    checks.append(False)
+            if False in checks:
+                emit("tool.arguments","observed",False)
+            elif None in checks:
+                emit("tool.arguments","not_computable",reason="evidence_missing")
+            else:
+                emit("tool.arguments","observed",True)
         else:
             emit("tool.arguments","not_applicable",reason="reference_missing")
     if tools is None:

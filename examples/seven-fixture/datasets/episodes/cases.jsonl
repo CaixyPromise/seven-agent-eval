@@ -1,0 +1,2 @@
+{"id":"episode-one","inputs":{},"episode":{"id":"episode-one","turns":[{"id":"first","case":{"id":"first","inputs":{"text":"第一轮"},"references":{"expected_tools":[{"name":"search","arguments":{"query":"demo"}}],"effect_status":"verified"}}},{"id":"second","case":{"id":"second","inputs":{"text":"第二轮"},"references":{"expected_tools":[{"name":"search"}]}}}]}}
+{"id":"episode-failure","inputs":{},"episode":{"id":"episode-failure","turns":[{"id":"failure","case":{"id":"failure","inputs":{"text":"fail"}}},{"id":"not-called","case":{"id":"not-called","inputs":{"text":"不得调用"}}}]}}

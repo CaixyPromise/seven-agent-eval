@@ -1,0 +1,5 @@
+id: history
+version: '1'
+format: seven-history
+path: saved/run1
+case: saved/case.yaml

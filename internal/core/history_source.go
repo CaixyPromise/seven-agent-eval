@@ -1,8 +1,8 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
 )
 
@@ -42,6 +42,11 @@ func (e *Engine) readSevenHistory(cfg SourceConfig, rev DatasetRevision) ([]Case
 		answer = response["assistant_text"]
 	}
 	result := SubjectResult{Response: answer, Trace: []any{map[string]any{"legacy_trace": trace, "legacy_checks": checks}}}
+	if duration, ok := record["duration_ms"].(json.Number); ok {
+		if value, err := duration.Float64(); err == nil && value >= 0 {
+			result.LatencyMS = &value
+		}
+	}
 	entries, _ := trace["tool_executions"].([]any)
 	for _, entry := range entries {
 		tool, ok := entry.(map[string]any)
@@ -51,12 +56,17 @@ func (e *Engine) readSevenHistory(cfg SourceConfig, rev DatasetRevision) ([]Case
 		arguments, _ := tool["tool_arguments_parsed_json"].(map[string]any)
 		status := "pending"
 		switch tool["status"] {
-		case "success", "completed":
+		case "ok", "success", "completed":
 			status = "completed"
 		case "failed", "error":
 			status = "error"
 		}
-		result.Tools = append(result.Tools, ToolEvidence{ID: fmt.Sprint(tool["tool_call_id"]), Name: fmt.Sprint(tool["tool_name"]), Arguments: arguments, Status: status, Result: tool["tool_output"]})
+		id, idOK := tool["tool_call_id"].(string)
+		name, nameOK := tool["tool_name"].(string)
+		if !idOK || id == "" || !nameOK || name == "" {
+			return nil, rev, errors.New("history tool identity missing")
+		}
+		result.Tools = append(result.Tools, ToolEvidence{ID: id, Name: name, Arguments: arguments, Status: status, Result: tool["tool_result_json"]})
 	}
 	c := Case{ID: id, Inputs: map[string]any{}, Result: &result, Metadata: map[string]any{"legacy_checks": checks, "legacy_variant": record["variant_id"]}}
 	if state, ok := trace["final_status"].(string); ok && state != "completed" && state != "success" {

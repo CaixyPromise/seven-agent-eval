@@ -97,6 +97,7 @@ func invokeSeven(ctx context.Context, cfg HTTPConfig, c Case) (SubjectResult, er
 	if !ok {
 		return result, errors.New("Seven inputs require text")
 	}
+	start := time.Now()
 	response, err := sevenRequest(ctx, cfg, "/workspaces/"+cfg.WorkspaceID+"/sessions/"+session+"/conversation/stream", map[string]any{"text": text, "branchId": "main"})
 	if err != nil {
 		return result, err
@@ -105,7 +106,6 @@ func invokeSeven(ctx context.Context, cfg HTTPConfig, c Case) (SubjectResult, er
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
 		return result, errors.New("Seven response is not SSE")
 	}
-	start := time.Now()
 	scan := bufio.NewScanner(io.LimitReader(response.Body, (8<<20)+1))
 	scan.Buffer(make([]byte, 4096), 1<<20)
 	event := ""
@@ -155,6 +155,9 @@ func invokeSeven(ctx context.Context, cfg HTTPConfig, c Case) (SubjectResult, er
 					tid, _ := part["toolCallId"].(string)
 					name, _ := part["toolName"].(string)
 					arguments, _ := part["input"].(map[string]any)
+					if encoded, ok := part["input"].(string); ok {
+						_ = decodeJSON([]byte(encoded), &arguments)
+					}
 					state, _ := part["state"].(string)
 					status := "pending"
 					if state == "completed" {

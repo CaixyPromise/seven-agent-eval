@@ -109,6 +109,11 @@ func (s *Server) Handler() http.Handler {
 					descriptor[key] = value
 				}
 			}
+			if asset.Kind == "mapping" {
+				if fields, ok := asset.Descriptor["fields"].(map[string]any); ok {
+					descriptor["field_count"] = len(fields)
+				}
+			}
 			assets = append(assets, map[string]any{"kind": asset.Kind, "id": asset.ID, "version": asset.Version, "source": asset.Source, "path": asset.Path, "status": asset.Status, "diagnostic_code": diagnostic, "descriptor": descriptor})
 		}
 		jsonOut(w, map[string]any{"package": d.Package, "assets": assets})

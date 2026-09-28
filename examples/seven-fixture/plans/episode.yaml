@@ -1,0 +1,6 @@
+schema_version: evaluate.plan/v1
+id: episode
+mode: invoke
+preset: builtin.agent-basic@1
+dataset: dataset:episodes
+subject: adapter:seven

@@ -1,4 +1,7 @@
 import type { Asset, BasicSummary, CaseResult, Run } from "./types";
+export function assetIdentity(asset: Asset): string {
+  return JSON.stringify([asset.kind, asset.source, asset.id, asset.version, asset.path]);
+}
 export const assetKinds: Record<string, string> = {
   plan: "计划",
   dataset: "数据集",
