@@ -29,7 +29,7 @@ import { ErrorNotice, EmptyState, LoadingState } from "../../components/Feedback
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatDate } from "../../domain/presentation";
 import type { LivePlan, LiveReport, LiveWindow } from "../../domain/types";
-import { LiveChart } from "./LiveChart";
+import { EvaluationChart as LiveChart } from "../../components/EvaluationChart";
 import { WindowDrawer } from "./WindowDrawer";
 
 const ranges = ["15m", "1h", "6h", "24h"] as const;

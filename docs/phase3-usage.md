@@ -20,6 +20,14 @@ Mapping 的 `fields` 支持 `$`、`$.field` 与 JSON 对象组合，不支持表
 
 定义与 [NIST map_cut](https://github.com/usnistgov/trec_eval/blob/main/m_map_cut.c)、[NIST ndcg_cut](https://github.com/usnistgov/trec_eval/blob/main/m_ndcg_cut.c) 保持该口径；[BEIR 数据格式](https://github.com/beir-cellar/beir/wiki/Load-your-custom-dataset) 是格式依据。未声明通用业务及格线。
 
+### F1 与检索质量图表
+
+`builtin.rag-basic@1` 同时产生 `rag.f1@K`（交换字段为 `metric_id: rag.f1`、`parameters.k: K`）。每条 Case 的 `F1@K = 2 × Precision@K × Recall@K / (Precision@K + Recall@K)`；两者可计算且都为零时，F1 为零。缺 qrels、没有正相关参考、缺检索证据或目标失败时仍不可计算，不用零填补。
+
+默认 Processor 对逐样本 F1 取均值（macro F1），不是用平均 Precision/Recall 再求调和平均。`data.rag_quality` 按 evaluator 和除 K 外的完整指标参数隔离，输出数值升序的 K、三项均值及各自 observed/total。前端只绘制这些结果，不计算评分；关闭或替换 Processor 不补造曲线。老包没有这些输出时保持原报告。
+
+报告页“检索质量随 K 的变化”将 Precision、Recall、F1 放在同一图表，并以表格提供精确值和有效分母。它不是生产时间趋势，也不是业务正确率。仅配置一个 K 时显示单点；可设置 `parameters.k: [1, 3, 5, 10]` 查看截断变化。不可计算的值保持空缺，不跨断点连接。结果包保留 F1、码表及图表数据，独立查看不依赖 Python。
+
 ## 可选 judge
 
 显式 `evaluators: [evaluator:basic, evaluator:rag, evaluator:rag-judge]`，通过 `SEVEN_EVAL_JUDGE_ENDPOINT`（完整 chat-completions URL）、`SEVEN_EVAL_JUDGE_MODEL`、`SEVEN_EVAL_JUDGE_KEY` 配置。也可在 `parameters.judge` 指定 endpoint_env/model_env/auth_env。只接受 JSON score ∈ [0,1]，不自动重试，不跟随重定向。只在配置 `price.currency/input_per_1000/output_per_1000` 且返回实际 prompt/completion tokens 时计算成本。stream 仍要求显式采样率和预算。

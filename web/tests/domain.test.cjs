@@ -5,7 +5,7 @@ const root = process.env.SEVEN_WEB_TEST_BUILD;
 const { responseError, errorCopy, safeErrorCode, ProductError } = require(
   join(root, "api/errors.js"),
 );
-const { assetIdentity, recipeName, isAnomaly, basicSummary, pretty } = require(
+const { assetIdentity, recipeName, isAnomaly, basicSummary, pretty, metricLabel } = require(
   join(root, "domain/presentation.js"),
 );
 const { evaluationApi } = require(join(root, "api/client.js"));
@@ -70,6 +70,12 @@ test("custom processor is not mistaken for a default summary", () => {
     basicSummary({ outputs: [{ processor: "team", data: { coverage: 1 } }] }),
     undefined,
   );
+});
+test("F1 has a K-specific label and report preserves processor quality data", () => {
+  assert.equal(metricLabel("rag.f1", { k: 5 }), "检索 F1 @5");
+  const quality = [{ id: "identity", points: [{ k: 5, precision: 0, recall: null, f1: null }] }];
+  assert.equal(basicSummary({ outputs: [{ processor: "builtin.basic-summary@1", data: { rag_quality: quality } }] }).rag_quality, quality);
+  assert.equal(basicSummary({ outputs: [{ processor: "custom", data: { rag_quality: quality } }] }), undefined);
 });
 test("data rendering preserves false and zero", () => {
   assert.equal(pretty(false), "false");

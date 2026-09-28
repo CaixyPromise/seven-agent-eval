@@ -142,9 +142,34 @@ def process(ctx):
                      "pending": max(0, ctx["total"]-len(cases)),
                      "coverage": scored/ctx["total"] if ctx["total"] else None,
                      "case_statuses": dict(Counter(c["status"] for c in cases)),
-                     "series": series, "failure_ids": failure_ids,
+                     "series": series, "rag_quality": rag_quality(series), "failure_ids": failure_ids,
                      "note": "覆盖率表示产生了有效指标的样本比例，不代表业务正确率。"},
             "input_digest": ctx["input_digest"]}
+
+def rag_quality(series):
+    """Macro means across K, isolated by evaluator and all remaining parameters.
+
+    F1 is the mean of sample F1 observations, never the harmonic mean of means.
+    Missing observations stay null, including older bundles without F1.
+    """
+    groups = {}
+    for stats in series:
+        if stats["metric_id"] not in ("rag.precision", "rag.recall", "rag.f1"):
+            continue
+        parameters = dict(stats["parameters"])
+        k = parameters.pop("k", None)
+        if type(k) is not int or k <= 0:
+            continue
+        identity = json.dumps([stats["evaluator"], parameters], sort_keys=True)
+        group = groups.setdefault(identity, {"id": identity, "evaluator": stats["evaluator"],
+                                            "parameters": parameters, "points": {}})
+        point = group["points"].setdefault(k, {"k": k, "precision": None, "recall": None,
+                                               "f1": None, "counts": {}})
+        name = stats["metric_id"].split(".")[1]
+        point[name] = stats.get("mean")
+        point["counts"][name] = {"observed": stats["observed"], "total": stats["total"]}
+    return [{**groups[key], "points": [groups[key]["points"][k] for k in sorted(groups[key]["points"])]}
+            for key in sorted(groups)]
 
 def process_window(ctx):
     window = ctx["window"]

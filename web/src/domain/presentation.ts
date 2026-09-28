@@ -23,6 +23,7 @@ export const metricNames: Record<string, string> = {
   "agent.effect":"已声明效果匹配",
   "rag.recall": "检索召回率",
   "rag.precision": "检索精确率",
+  "rag.f1": "检索 F1",
   "rag.mrr": "首个相关结果排名倒数",
   "rag.ndcg": "等级相关性排名",
   "rag.map": "平均精确率",

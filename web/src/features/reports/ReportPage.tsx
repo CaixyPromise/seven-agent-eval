@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import Button from "antd/es/button";
 import Card from "antd/es/card";
 import Statistic from "antd/es/statistic";
@@ -26,6 +26,7 @@ import { MetricSummary } from "./MetricSummary";
 import { EpisodeTable } from "./EpisodeTable";
 import { SampleTable } from "./SampleTable";
 import { SampleDrawer } from "./SampleDrawer";
+const RagQualityChart = lazy(() => import("./RagQualityChart"));
 export default function ReportPage({
   id,
   onFinished,
@@ -212,6 +213,11 @@ export default function ReportPage({
               </p>
             )}
           </Card>
+          {basic?.rag_quality?.length ? (
+            <Suspense fallback={<LoadingState label="正在加载检索质量图表" />}>
+              <RagQualityChart groups={basic.rag_quality} />
+            </Suspense>
+          ) : null}
           {basic?.series?.length ? (
             <MetricSummary series={basic.series} />
           ) : null}

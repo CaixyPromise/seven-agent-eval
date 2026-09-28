@@ -18,7 +18,7 @@ echarts.use([
   TooltipComponent,
 ]);
 
-export function LiveChart({
+export function EvaluationChart({
   ariaLabel,
   option,
   onPoint,

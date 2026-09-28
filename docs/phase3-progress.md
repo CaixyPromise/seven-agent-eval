@@ -6,13 +6,24 @@
 
 - Checkpoint 1（已提交 `a20939b`）：Source/Mapping、JSONL HTTP RAG、确定性指标、页面及独立结果包。
 - Checkpoint 2（已提交 `6bbe982`）：CSV/TREC/BEIR、可选 HTTP judge。
-- Checkpoint 3（本次最终交付提交）：Seven Workspace SSE、历史导入、Episode、页面复核与统一回归。
+- Checkpoint 3（已提交 `8d5b1f4`）：Seven Workspace SSE、历史导入、Episode、页面复核与统一回归。
 
 状态：本轮计划的受控交付完成；真实 Seven 环境调用和真实模型评分质量待提供环境后验收，不以本机 fixture 替代。
 
 共享 schema、Subject lifecycle 和执行核心在同一次连续实施中完成；checkpoint 是可演示交付节点，不声称各节点的公共代码彼此独立。本轮用户确认先完成受控验收，真实 Seven 环境稍后提供。
 
 第一、二阶段本机离线与受控持续评分已在基线验收。真实生产接入、真实 judge 评分质量、容量与安装发行不在该证据范围。
+
+## F1 与检索趋势增量（2026-09-28）
+
+- `builtin.rag-basic@1` 新增逐 Case `rag.f1`，沿用完整 K/参数身份与缺失语义；基础 Processor 输出 `data.rag_quality`，分别保留 Precision、Recall、macro F1、有效观测数。不是对平均 Precision/Recall 再计算 F1。
+- 报告页使用 Ant Design + ECharts 展示随检索 K 的变化；这不是生产时间趋势。图表按需加载，离线报告与持续评分共用图表生命周期组件。仅配置一个 K 时显示单点，旧包没有新增输出时不补造曲线。
+- `make test`（Go race、Python 22 项、React 领域测试、类型检查/构建）、`go vet ./...`、`make acceptance-rag`、原 `scripts/acceptance.py` 与 `scripts/live_acceptance.py` 退出 0。新增 React F1/Processor 数据透传测试后 `pnpm --dir web test` 10 项及 `pnpm --dir web build` 再次通过。
+- RAG 验收增加逐样本 macro F1、K 分组与码表断言。新包 `artifacts/phase3/20260928T062745-6ab54abdcfee53b4.seven.eval`，5 个 Case。独立临时目录、`SEVEN_EVAL_PYTHON=/does-not-exist`、真实 Go server 打开；Chromium 1536×1024 与 390×844 复核图表和精确值表。390px 时 document scrollWidth=390，表格内部保留横向滚动。
+- 使用浏览器 `prefers-reduced-motion: reduce` 实际媒体状态复核；共用组件在初始化、更新时读取该状态，保留媒体监听/ResizeObserver 的清理。未做动画性能或实例泄漏的长时间仪器化测试。
+- 局部空统计状态经临时网络拦截真实渲染，显示无可计算指标及空值，随后恢复真实数据。证据 `output/playwright/rag-f1/chart.png`、`narrow.png`、`unavailable.png`；复核记录见 `docs/design/phase3-review.md`。这不是全站 200% zoom 或错误状态完整审计。
+- 大 chunk 警告仍存在：主 chunk 约 843 KiB，共用 ECharts chunk 约 536 KiB；RAG 图表组件约 1.8 KiB，按需加载，不使主入口增加 ECharts。
+- 本增量作为 F1 checkpoint 本地提交，不推送；真实 Seven 与真实模型验证边界不变。
 
 ## 接口检查
 

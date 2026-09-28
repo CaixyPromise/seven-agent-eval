@@ -2,8 +2,9 @@
 import math
 from .basic import metric
 
-METRICS = ["rag.recall", "rag.precision", "rag.mrr", "rag.ndcg", "rag.map",
-           "citation.resolvable", "citation.retrieved", "citation.range"]
+RETRIEVAL_METRICS = ["rag.recall", "rag.precision", "rag.f1", "rag.mrr", "rag.ndcg", "rag.map"]
+CITATION_METRICS = ["citation.resolvable", "citation.retrieved", "citation.range"]
+METRICS = RETRIEVAL_METRICS + CITATION_METRICS
 
 def evaluate(ctx):
     case, result = ctx["case"], ctx["result"]
@@ -33,7 +34,7 @@ def evaluate(ctx):
         identity = {"k": k, "gain":"linear", "ap_denominator":"all_positive_qrels"}
         reason = "subject_error" if ctx.get("status") != "completed" else "reference_missing" if not qrels else "no_positive_reference" if not positive else "evidence_missing" if not retrieval_available else ""
         if reason:
-            for mid in METRICS[:5]:
+            for mid in RETRIEVAL_METRICS:
                 emit(mid, status="not_computable", reason=reason, identity=identity)
             continue
         ranked = ids[:k]
@@ -43,14 +44,16 @@ def evaluate(ctx):
         ideal = sorted(qrels.values(), reverse=True)[:k]
         idcg = sum(g/math.log2(i+2) for i, g in enumerate(ideal))
         ap = sum(sum(hits[:i+1])/(i+1) for i, hit in enumerate(hits) if hit)/len(positive)
-        values = [sum(hits)/len(positive), sum(hits)/k,
+        recall, precision = sum(hits)/len(positive), sum(hits)/k
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0
+        values = [recall, precision, f1,
                   next((1/(i+1) for i, h in enumerate(hits) if h), 0), dcg/idcg, ap]
-        for mid, value in zip(METRICS[:5], values):
+        for mid, value in zip(RETRIEVAL_METRICS, values):
             emit(mid, value, identity=identity)
     catalog = {d["id"]: d for d in refs.get("documents", [])}
     catalog.update({d["id"]: d for d in docs})
     citations = result.get("citations")
-    for mid in METRICS[5:]:
+    for mid in CITATION_METRICS:
         if citations is None:
             emit(mid, status="not_computable", reason="evidence_missing")
             continue

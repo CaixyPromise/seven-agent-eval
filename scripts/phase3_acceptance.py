@@ -37,6 +37,14 @@ def main():
             assert all(m["status"]=="not_computable" and m["value"] is None for m in missing["metrics"] if m["metric_id"].startswith("rag."))
             identities={m["parameters"]["k"] for m in run["cases"][0]["metrics"] if m["metric_id"]=="rag.precision"}
             assert identities=={1,5}
+            quality=next(o for o in run["outputs"] if o["processor"]=="builtin.basic-summary@1")["data"]["rag_quality"]
+            assert [p["k"] for p in quality[0]["points"]]==[1,5]
+            for k in (1,5):
+                f1=[m["value"] for c in run["cases"] for m in c["metrics"] if m["metric_id"]=="rag.f1" and m["parameters"]["k"]==k and m["status"]=="observed"]
+                point=next(p for p in quality[0]["points"] if p["k"]==k)
+                assert abs(point["f1"]-sum(f1)/len(f1))<1e-12
+                assert point["counts"]["f1"]["observed"]==len(f1)
+            assert any(m["id"]=="rag.f1" for m in run["catalogs"]["metrics"])
             dest=artifacts/(run["id"]+".seven.eval");shutil.copy2(bundle,dest)
             (artifacts/"report.html").write_bytes(html)
             shutil.rmtree(package)

@@ -500,6 +500,13 @@ pre {
   width: 100%;
   height: 245px;
 }
+.rag-quality-panel {
+  margin-bottom: 20px;
+  min-width: 0;
+}
+.rag-quality-panel section + section {
+  margin-top: 24px;
+}
 .live-window-panel {
   margin-bottom: 0;
 }

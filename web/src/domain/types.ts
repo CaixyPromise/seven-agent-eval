@@ -57,10 +57,23 @@ export type Series = {
   parameters?: unknown;
 };
 export type BasicSummary = {
+  rag_quality?: RagQuality[];
   scored?: number;
   coverage?: number;
   failure_ids?: string[];
   series?: Series[];
+};
+export type RagQuality = {
+  id: string;
+  evaluator: string;
+  parameters: Record<string, unknown>;
+  points: {
+    k: number;
+    precision: number | null;
+    recall: number | null;
+    f1: number | null;
+    counts: Partial<Record<"precision" | "recall" | "f1", {observed: number; total: number}>>;
+  }[];
 };
 
 export type LivePlan = {
