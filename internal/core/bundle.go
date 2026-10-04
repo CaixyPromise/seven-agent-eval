@@ -30,6 +30,7 @@ const reportTemplate = `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <small>SEVEN / EVALUATION REPORT</small><h1>{{.Package.Name}}</h1><p><span class="tag">{{.Status}}</span> {{.Completed}} / {{.Total}} processed · {{.CreatedAt}}</p>
 {{with .Scope}}<section><h2>Window / 窗口快照</h2><p>{{.PlanID}} · {{.Start}} — {{.End}} · {{.State}} · 修订 {{.Revision}}</p><p>评分延迟：从接收证据到完成评分计算，包含排队；不等于业务调用耗时。</p></section>{{end}}
 <p>{{.Message}}</p><p>Basic checks describe verified rules, not overall business correctness.</p>
+{{$kpi := kpis .Outputs}}<section><h2>Report summary / 首页指标</h2>{{if $kpi.Conflict}}<p>首页指标存在多个来源，请在计划中仅保留一个首页指标提供者。原始统计仍可查看。</p>{{else}}<p>有有效指标的样本：{{display $kpi.Scored}} · 评分覆盖率（0–1）：{{display $kpi.Coverage}} · 异常样本：{{display $kpi.Anomalies}}</p>{{end}}</section>
 <section><h2>Conclusions / 结论</h2>{{range .Conclusions}}<p><strong>{{.Code}}</strong> — {{.Summary}}</p>{{else}}<p>Conclusions disabled or unavailable.</p>{{end}}</section>
 {{with .Comparison}}<section><h2>Candidate comparison / 候选参数比较</h2><p>基线 {{.BaselineID}} · 共同案例 {{len .CaseIDs}} 条</p><pre>{{.InputDigest}}</pre></section>{{end}}
 {{range .Outputs}}{{with .Data.comparison}}<section><h2>Paired statistics / 配对统计</h2><p>{{.note}}</p><table><tr><th>候选</th><th>目标参数</th><th>已处理 / 计划</th><th>参数确认</th></tr>{{range .candidates}}<tr><td>{{.id}}</td><td><pre>{{pretty .target_parameters}}</pre></td><td>{{.processed}} / {{.total}}</td><td>{{pretty .receipts}}</td></tr>{{end}}</table><table><tr><th>指标 / 参数</th><th>候选</th><th>有效均值 / 观测数</th><th>配对案例数</th><th>配对差值</th></tr>{{range .rows}}<tr><td>{{.metric_id}}<pre>{{pretty .parameters}}</pre></td><td>{{.candidate_id}}</td><td>{{pretty .mean}} · {{.observed}} / {{.total}}</td><td>{{.paired}}</td><td>{{pretty .delta}}</td></tr>{{end}}</table></section>{{end}}{{end}}
@@ -42,7 +43,12 @@ const reportTemplate = `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <footer>Seven Eval · self-contained report · {{.ID}}</footer></html>`
 
 func Report(r Run) ([]byte, error) {
-	t, err := template.New("report").Funcs(template.FuncMap{"pretty": func(v any) string { b, _ := json.MarshalIndent(v, "", "  "); return string(b) }}).Parse(reportTemplate)
+	t, err := template.New("report").Funcs(template.FuncMap{"kpis": ResolveReportKPIs, "display": func(v *float64) string {
+		if v == nil {
+			return "—"
+		}
+		return fmt.Sprint(*v)
+	}, "pretty": func(v any) string { b, _ := json.MarshalIndent(v, "", "  "); return string(b) }}).Parse(reportTemplate)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +59,11 @@ func Report(r Run) ([]byte, error) {
 func ValidateRun(r Run) error {
 	if err := protocol.Validate("run", r); err != nil {
 		return err
+	}
+	for _, output := range r.Outputs {
+		if err := validateProcessorOutput(output); err != nil {
+			return err
+		}
 	}
 	if !validID.MatchString(r.ID) || r.Completed != len(r.Cases) || r.Completed > r.Total {
 		return errors.New("invalid run identity/counts")

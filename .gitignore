@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 node_modules/
 web/dist/
+sdk/typescript/dist/
 bin/
 .seven-evaluate/
 *.seven.eval

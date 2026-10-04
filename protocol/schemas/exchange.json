@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://seven.local/exchange.json",
   "$defs": {
+    "report_mapping": {"type":"object","required":["version","kpis"],"properties":{"version":{"const":"1"},"kpis":{"type":"object","properties":{"scored":{"type":"string"},"coverage":{"type":"string"},"anomalies":{"type":"string"}},"additionalProperties":false}},"additionalProperties":false},
     "candidate": {"type":"object","required":["id","target_parameters"],"properties":{"id":{"type":"string","pattern":"^[a-zA-Z0-9][a-zA-Z0-9._-]*$"},"target_parameters":{"type":"object","minProperties":1}},"additionalProperties":false},
     "comparison": {"type":"object","required":["baseline_id","case_ids","input_digest"],"properties":{"baseline_id":{"type":"string"},"case_ids":{"type":"array","uniqueItems":true,"items":{"type":"string"}},"input_digest":{"type":"string"}},"additionalProperties":false},
     "parameter_receipt": {"type":"object","required":["requested","state"],"properties":{"requested":{"type":"object"},"applied":{"type":"object"},"state":{"enum":["target_confirmed","mismatch","unconfirmed"]}},"additionalProperties":false},
@@ -185,6 +186,7 @@
     "processor_output": {
       "type": "object",
       "properties": {
+        "report":{"$ref":"#/$defs/report_mapping"},
         "processor": {
           "type": "string"
         },
@@ -234,6 +236,7 @@
     "descriptor": {
       "type": "object",
       "properties": {
+        "execution_class": {"enum":["deterministic","judge"]},
         "id": {
           "type": "string",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
@@ -414,6 +417,7 @@
     "effective": {
       "type": "object",
       "properties": {
+        "node_runtime":{"type":"object","required":["snapshot_id","version"],"properties":{"snapshot_id":{"type":"string","pattern":"^[a-zA-Z0-9][a-zA-Z0-9._-]*$"},"version":{"type":"string"}},"additionalProperties":false},
         "plan": {
           "type": "object"
         },

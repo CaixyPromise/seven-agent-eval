@@ -1,0 +1,6 @@
+schema_version: evaluate.plan/v1
+id: typescript
+mode: replay
+dataset: dataset:sample
+processors: [processor:team-summary]
+conclusions: [conclusion:team-conclusion]

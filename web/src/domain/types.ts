@@ -40,7 +40,7 @@ export type Run = RunSummary & {
   episodes?: EpisodeResult[];
   scope?: WindowScope;
   cases: CaseResult[];
-  outputs: { processor: string; data: Record<string, unknown> }[];
+  outputs: { processor: string; data: Record<string, unknown>; report?: {version:"1"; kpis:Partial<Record<"scored"|"coverage"|"anomalies",string>>} }[];
   conclusions: { code: string; level: string; summary: string }[];
   catalogs: unknown;
   effective: unknown;

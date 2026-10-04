@@ -1,0 +1,6 @@
+schema_version: evaluate.plan/v1
+id: python
+mode: replay
+dataset: dataset:sample
+processors: [processor:python-summary]
+conclusions: [conclusion:team-conclusion]

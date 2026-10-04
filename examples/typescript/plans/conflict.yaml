@@ -1,0 +1,6 @@
+schema_version: evaluate.plan/v1
+id: conflict
+mode: replay
+dataset: dataset:sample
+processors: [processor:team-summary, processor:python-summary]
+conclusions: [conclusion:team-conclusion]

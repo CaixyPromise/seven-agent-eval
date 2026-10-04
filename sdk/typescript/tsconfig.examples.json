@@ -1,0 +1,5 @@
+{
+  "extends":"./tsconfig.json",
+  "compilerOptions":{"baseUrl":".","paths":{"@seven-agent/eval":["src/index.ts"]},"allowJs":true,"checkJs":true},
+  "include":["../../examples/typescript/processors/*.ts","../../examples/typescript/conclusions/*.js","src/index.ts","dist/exchange.d.ts"]
+}

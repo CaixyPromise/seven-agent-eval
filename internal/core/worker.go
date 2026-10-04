@@ -26,9 +26,13 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 }
 
 type Worker struct {
-	Home   string
-	Python string
-	Source string
+	Home         string
+	Python       string
+	Source       string
+	Node         string
+	Package      string
+	NodeSnapshot string
+	NodeHashes   map[string]string
 }
 
 func NewWorker(home string) Worker {
@@ -36,9 +40,23 @@ func NewWorker(home string) Worker {
 	if python == "" {
 		python = filepath.Join(home, "sdk", "python", ".venv", "bin", "python")
 	}
-	return Worker{Home: home, Python: python}
+	return Worker{Home: home, Python: python, Node: os.Getenv("SEVEN_EVAL_NODE")}
 }
 func (w Worker) Call(ctx context.Context, method string, params any, out any) error {
+	cmd := exec.CommandContext(ctx, w.Python, "-m", "seven_evaluate.worker")
+	if p, ok := params.(map[string]any); ok {
+		if path, ok := p["path"].(string); ok && nodeScript(path) {
+			copy := cloneMap(p)
+			var cleanup func()
+			var err error
+			cmd, cleanup, err = w.nodeCommand(ctx, copy)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			params = copy
+		}
+	}
 	req := []map[string]any{
 		{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
 		{"jsonrpc": "2.0", "id": 2, "method": method, "params": params},
@@ -49,7 +67,6 @@ func (w Worker) Call(ctx context.Context, method string, params any, out any) er
 			return e
 		}
 	}
-	cmd := exec.CommandContext(ctx, w.Python, "-m", "seven_evaluate.worker")
 	source := w.Source
 	if source == "" {
 		source = filepath.Join(w.Home, "sdk", "python", "src")
@@ -65,7 +82,7 @@ func (w Worker) Call(ctx context.Context, method string, params any, out any) er
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("worker failed; verify Python environment or extension (output redacted)")
+		return errors.New("worker failed; verify runtime or extension (output redacted)")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
 	for id := 1; id <= 2; id++ {

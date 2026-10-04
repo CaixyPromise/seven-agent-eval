@@ -1,0 +1,4 @@
+schema_version: evaluate.package/v1
+id: example.typescript
+version: 1.0.0
+name: TypeScript 扩展验证

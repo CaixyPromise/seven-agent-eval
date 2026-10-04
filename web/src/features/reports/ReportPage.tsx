@@ -17,6 +17,7 @@ import {
 import { evaluationApi } from "../../api/client";
 import { safeErrorCode, type ErrorCode } from "../../api/errors";
 import { basicSummary, formatDate, isLive } from "../../domain/presentation";
+import { reportKpis } from "../../domain/reportKpis";
 import type { CaseResult } from "../../domain/types";
 import { useRun } from "../runs/useRun";
 import { StatusBadge } from "../../components/StatusBadge";
@@ -46,6 +47,7 @@ export default function ReportPage({
   const [actionError, setActionError] = useState<ErrorCode | null>(null),
     [action, setAction] = useState<"cancel" | "export" | null>(null);
   const actionLock = useRef(false);
+  const kpis=reportKpis(run?.outputs??[]);
   async function perform(kind: "cancel" | "export") {
     if (actionLock.current) return;
     actionLock.current = true;
@@ -169,7 +171,7 @@ export default function ReportPage({
             <Card className="summary-card">
               <Statistic
                 title="有有效指标的样本"
-                value={basic?.scored ?? "—"}
+                value={kpis.scored ?? "—"}
               />
             </Card>
             <Card className="summary-card">
@@ -188,8 +190,8 @@ export default function ReportPage({
                   </span>
                 }
                 value={
-                  basic?.coverage != null
-                    ? (basic.coverage * 100).toFixed(0) + "%"
+                  kpis.coverage != null
+                    ? (kpis.coverage * 100).toFixed(0) + "%"
                     : "—"
                 }
               />
@@ -197,10 +199,11 @@ export default function ReportPage({
             <Card className="summary-card warning-value">
               <Statistic
                 title="异常样本"
-                value={basic?.failure_ids?.length ?? "—"}
+                value={kpis.anomalies ?? "—"}
               />
             </Card>
           </div>
+          {kpis.conflict?<Alert type="warning" showIcon title="首页指标存在多个来源" description="请在计划中仅保留一个首页指标提供者。原始统计仍可查看。"/>:kpis.invalid?<Alert type="warning" showIcon title="首页指标无法读取" description="请检查处理器的指标映射后重新运行。原始统计仍可查看。"/>:null}
           <Card className="conclusions" title="评测结论" size="small">
             {run.conclusions.length ? (
               run.conclusions.map((conclusion, index) => (

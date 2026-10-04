@@ -9,6 +9,16 @@ const { assetIdentity, recipeName, isAnomaly, basicSummary, pretty, metricLabel 
   join(root, "domain/presentation.js"),
 );
 const { evaluationApi } = require(join(root, "api/client.js"));
+const { reportKpis } = require(join(root, "domain/reportKpis.js"));
+
+test("custom KPI mapping retains zero/null and detects conflicts without fallback",()=>{
+ const output={processor:"team@1",data:{n:0,c:null,"a/b":2},report:{version:"1",kpis:{scored:"/n",coverage:"/c",anomalies:"/a~1b"}}};
+ assert.deepEqual(reportKpis([output]),{scored:0,coverage:null,anomalies:2});
+ assert.equal(reportKpis([output,output]).conflict,true);
+ assert.deepEqual(reportKpis([{processor:"custom",data:{scored:7,coverage:1}}]),{});
+ for(const path of ["/missing","/~2","not-pointer"])assert.equal(reportKpis([{...output,report:{version:"1",kpis:{scored:path}}}]).invalid,true);
+ for(const n of [false,"0",-1,0.5])assert.equal(reportKpis([{...output,data:{...output.data,n}}]).invalid,true);
+});
 
 test("shared builtin paths keep distinct asset row identities", () => {
   const rag={kind:"evaluator",source:"builtin",id:"rag",version:"1",path:"builtin/rag"};

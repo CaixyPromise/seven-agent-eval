@@ -86,6 +86,7 @@ type StreamConfig struct {
 	JudgePerWindowBudget   *int     `json:"judge_per_window_budget,omitempty" yaml:"judge_per_window_budget,omitempty"`
 }
 type Effective struct {
+	NodeRuntime *NodeRuntime      `json:"node_runtime,omitempty"`
 	Files       map[string]string `json:"files"`
 	Plan        Plan              `json:"plan"`
 	Evaluators  []string          `json:"evaluators"`
@@ -93,6 +94,10 @@ type Effective struct {
 	Conclusions []string          `json:"conclusions"`
 	Assets      []Asset           `json:"assets"`
 	Digest      string            `json:"digest"`
+}
+type NodeRuntime struct {
+	SnapshotID string `json:"snapshot_id"`
+	Version    string `json:"version"`
 }
 type Case struct {
 	ID         string         `json:"id"`
@@ -181,9 +186,14 @@ type CaseResult struct {
 	Metrics          []Metric      `json:"metrics"`
 }
 type ProcessorOutput struct {
+	Report      *ReportMapping `json:"report,omitempty"`
 	Processor   string         `json:"processor"`
 	Data        map[string]any `json:"data"`
 	InputDigest string         `json:"input_digest"`
+}
+type ReportMapping struct {
+	Version string            `json:"version"`
+	KPIs    map[string]string `json:"kpis"`
 }
 type Conclusion struct {
 	Handler string `json:"handler"`

@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"path/filepath"
 )
 
 func expandEpisodes(input []Case) ([]Case, error) {
@@ -67,16 +66,16 @@ func (e *Engine) createSubjectSession(ctx context.Context, r *Run) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	path, err := SafePath(e.Root, a.Path)
+	path, err := e.extensionPath(r, a)
 	if err != nil {
 		return nil, err
 	}
-	if filepath.Ext(a.Path) == ".py" {
+	if executableScript(a.Path) {
 		if a.Descriptor["session_lifecycle"] != true {
 			return nil, errors.New("Episode subject requires session lifecycle")
 		}
 		var session any
-		err = e.Worker.Call(ctx, "subject/create", map[string]any{"path": path, "context": map[string]any{}}, &session)
+		err = e.workerFor(r).Call(ctx, "subject/create", map[string]any{"path": path, "context": map[string]any{}}, &session)
 		return session, err
 	}
 	var cfg HTTPConfig

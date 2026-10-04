@@ -43,6 +43,7 @@ func FindPackage(start string) (string, error) {
 	return "", errors.New("evaluation.yaml not found; use init or --package")
 }
 func Discover(ctx context.Context, root string, worker Worker) (Discovery, error) {
+	worker.Package = root
 	var d Discovery
 	path, e := SafePath(root, "evaluation.yaml")
 	if e != nil {
@@ -101,6 +102,9 @@ func Discover(ctx context.Context, root string, worker Worker) (Discovery, error
 				return nil
 			}
 			ext := filepath.Ext(name)
+			if strings.HasSuffix(name, ".d.ts") || strings.HasSuffix(name, ".test.ts") || strings.HasSuffix(name, ".test.js") || strings.HasSuffix(name, ".spec.ts") || strings.HasSuffix(name, ".spec.js") {
+				return nil
+			}
 			if dir == "datasets" && name != "cases.jsonl" && name != "dataset.yaml" {
 				return nil
 			}
@@ -117,7 +121,7 @@ func Discover(ctx context.Context, root string, worker Worker) (Discovery, error
 				a.Descriptor["digest"] = Hash(b)
 			}
 			switch {
-			case ext == ".py":
+			case executableScript(p):
 				var desc map[string]any
 				c, cancel := context.WithTimeout(ctx, 10*time.Second)
 				err = worker.Call(c, "describe", map[string]any{"path": p}, &desc)
@@ -139,11 +143,9 @@ func Discover(ctx context.Context, root string, worker Worker) (Discovery, error
 						a.Descriptor = desc
 					}
 				}
-			case ext == ".ts" || ext == ".js":
-				err = errors.New("TypeScript runtime is not available in phase 1")
 			case ext == ".yaml" || ext == ".yml" || ext == ".json":
 				if a.Kind == "evaluator" || a.Kind == "processor" || a.Kind == "conclusion" {
-					err = errors.New("executable extensions require a Python descriptor in phase 1")
+					err = errors.New("executable extensions require a Python or TS/JS descriptor")
 				}
 				var doc map[string]any
 				if err == nil {
@@ -358,7 +360,7 @@ func Resolve(root string, d Discovery, id string) (Effective, error) {
 		if out.Plan.Parameters["cleanup_sessions"] == true && target.Descriptor["session_cleanup"] != true {
 			return out, errors.New("Subject has no supported per-session cleanup; audit sessions are retained")
 		}
-		if filepath.Ext(target.Path) != ".py" {
+		if !executableScript(target.Path) {
 			var cfg HTTPConfig
 			p, err := SafePath(root, target.Path)
 			if err != nil {

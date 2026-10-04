@@ -113,7 +113,7 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 		if lookupErr != nil {
 			return Run{}, planError(lookupErr)
 		}
-		if filepath.Ext(target.Path) == ".py" {
+		if executableScript(target.Path) {
 			if target.Descriptor["session_lifecycle"] != true {
 				return Run{}, planError(errors.New("Episode subject requires session lifecycle"))
 			}
@@ -127,6 +127,9 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 	}
 	if err = e.snapshot(&r); err != nil {
 		return Run{}, err
+	}
+	if err = e.freezeNode(ctx, &r); err != nil {
+		return Run{}, planError(err)
 	}
 	if b, er := json.Marshal(e.redactForRun(&r, r.Effective)); er == nil {
 		_ = decodeJSON(b, &r.Effective)
@@ -181,6 +184,9 @@ func (e *Engine) PrepareStream(ctx context.Context, planID string) (Run, error) 
 		}
 	}
 	r := Run{SchemaVersion: Version, ID: "stream-" + planID, Package: d.Package, CreatedAt: time.Now().UTC(), Status: "processing", Total: 0, Completed: 0, Effective: effective, DatasetDigest: "", Cases: []CaseResult{}, Outputs: []ProcessorOutput{}, Conclusions: []Conclusion{}, Catalogs: catalogs}
+	if err = e.freezeNode(ctx, &r); err != nil {
+		return Run{}, planError(err)
+	}
 	r.Effective.Digest = Digest(r.Effective)
 	return r, nil
 }
@@ -262,7 +268,7 @@ func (e *Engine) ProcessExisting(ctx context.Context, r *Run) error {
 		var output ProcessorOutput
 		err := e.extension(ctx, r, ref, "processor", "processor/process", map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "window": r.Scope, "comparison": r.Comparison, "candidates": r.Effective.Plan.Candidates}, &output)
 		if err == nil {
-			err = protocol.Validate("processor_output", output)
+			err = validateProcessorOutput(output)
 		}
 		if err != nil {
 			r.Message = "Processor failed; no fallback statistics were substituted"
@@ -394,6 +400,9 @@ func (e *Engine) asset(r *Run, reference, kind string) (Asset, error) {
 		return a, err
 	}
 	if a.Source == "local" {
+		if nodeScript(a.Path) && r.Effective.NodeRuntime != nil {
+			return a, nil
+		}
 		p, err := SafePath(e.Root, a.Path)
 		if err != nil {
 			return a, err
@@ -418,7 +427,7 @@ func (e *Engine) extension(ctx context.Context, r *Run, ref, kind, method string
 		c["parameters"] = r.Effective.Plan.Parameters
 	}
 	if a.Source == "local" {
-		p, err := SafePath(e.Root, a.Path)
+		p, err := e.extensionPath(r, a)
 		if err != nil {
 			return err
 		}
@@ -426,7 +435,7 @@ func (e *Engine) extension(ctx context.Context, r *Run, ref, kind, method string
 	}
 	c, cancel := context.WithTimeout(ctx, time.Duration(r.Effective.Plan.TimeoutSeconds)*time.Second)
 	defer cancel()
-	return e.Worker.Call(c, method, params, out)
+	return e.workerFor(r).Call(c, method, params, out)
 }
 func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 	// Execution reads only its frozen package/SDK copy, including helper modules.
@@ -592,7 +601,7 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 		input := map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "episodes": r.Episodes, "comparison": r.Comparison, "candidates": r.Effective.Plan.Candidates}
 		er := e.extension(finalCtx, &r, ref, "processor", "processor/process", input, &output)
 		if er == nil {
-			er = protocol.Validate("processor_output", output)
+			er = validateProcessorOutput(output)
 		}
 		if er != nil {
 			r.Message = "Processor failed; no fallback statistics were substituted"
@@ -642,11 +651,11 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Duration(r.Effective.Plan.TimeoutSeconds)*time.Second)
 				a, cleanupErr := e.asset(&r, r.Effective.Plan.Subject, "adapter")
 				if cleanupErr == nil {
-					path, pathErr := SafePath(e.Root, a.Path)
+					path, pathErr := e.extensionPath(&r, a)
 					cleanupErr = pathErr
 					if cleanupErr == nil {
 						var ignored any
-						cleanupErr = e.Worker.Call(cleanupCtx, "subject/cleanup", map[string]any{"path": path, "context": map[string]any{"session": episode.Session}}, &ignored)
+						cleanupErr = e.workerFor(&r).Call(cleanupCtx, "subject/cleanup", map[string]any{"path": path, "context": map[string]any{"session": episode.Session}}, &ignored)
 					}
 				}
 				cleanupCancel()
@@ -682,12 +691,12 @@ func (e *Engine) invoke(ctx context.Context, r *Run, c Case) (SubjectResult, err
 	if err != nil {
 		return result, err
 	}
-	if filepath.Ext(a.Path) == ".py" {
-		path, err := SafePath(e.Root, a.Path)
+	if executableScript(a.Path) {
+		path, err := e.extensionPath(r, a)
 		if err != nil {
 			return result, err
 		}
-		err = e.Worker.Call(ctx, "subject/invoke", map[string]any{"path": path, "context": map[string]any{"inputs": c.Inputs, "target_parameters": targetParameters(r.Effective.Plan, c), "session": ctx.Value(subjectSessionKey{})}}, &result)
+		err = e.workerFor(r).Call(ctx, "subject/invoke", map[string]any{"path": path, "context": map[string]any{"inputs": c.Inputs, "target_parameters": targetParameters(r.Effective.Plan, c), "session": ctx.Value(subjectSessionKey{})}}, &result)
 		if err == nil {
 			err = protocol.Validate("subject_result", result)
 		}

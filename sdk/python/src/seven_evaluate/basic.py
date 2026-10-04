@@ -103,6 +103,12 @@ def evaluate(ctx):
     return out
 
 def process(ctx):
+    output = _process(ctx)
+    output["data"]["anomaly_count"] = len(output["data"]["failure_ids"])
+    output["report"] = {"version":"1", "kpis":{"scored":"/scored", "coverage":"/coverage", "anomalies":"/anomaly_count"}}
+    return output
+
+def _process(ctx):
     if ctx.get("comparison"):
         from .comparison import process as comparison_process
         return comparison_process(ctx)

@@ -1,11 +1,16 @@
-.PHONY: setup build test demo acceptance-live acceptance-rag acceptance-seven acceptance-compare browser-fixture
+.PHONY: setup build test demo acceptance-live acceptance-rag acceptance-seven acceptance-compare acceptance-typescript browser-fixture
 setup:
 	uv sync --locked --project sdk/python --python 3.11
 	pnpm --dir web install --frozen-lockfile
+	pnpm --dir sdk/typescript install --frozen-lockfile
+	pnpm --dir sdk/typescript build
 build:
+	pnpm --dir sdk/typescript build
 	pnpm --dir web build
 	go build -o bin/seven-eval ./cmd/seven-eval
 test:
+	pnpm --dir sdk/typescript build
+	pnpm --dir sdk/typescript test
 	go test -race ./...
 	pnpm --dir web test
 	uv run --project sdk/python python -m unittest discover -s sdk/python/tests -v
@@ -22,3 +27,5 @@ acceptance-seven: build
 	uv run --project sdk/python python scripts/seven_acceptance.py
 acceptance-compare: build
 	uv run --project sdk/python python scripts/comparison_acceptance.py
+acceptance-typescript: build
+	uv run --project sdk/python python scripts/typescript_acceptance.py

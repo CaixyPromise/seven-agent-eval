@@ -1,0 +1,5 @@
+{"id":"correct","inputs":{"question":"退款时间？"},"response":"3天","references":{"exact":"3天"}}
+{"id":"wrong","inputs":{"question":"退款时间？"},"response":"30天","references":{"exact":"3天"}}
+{"id":"missing","inputs":{"question":"退款时间？"},"response":null}
+{"id":"zero","inputs":{"question":"数量？"},"response":0,"references":{"exact":0}}
+{"id":"false","inputs":{"question":"启用？"},"response":false,"references":{"exact":false}}

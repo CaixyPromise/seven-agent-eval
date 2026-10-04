@@ -9,6 +9,7 @@ try {
     [
       "node_modules/typescript/bin/tsc",
       "src/domain/presentation.ts",
+      "src/domain/reportKpis.ts",
       "src/api/client.ts",
       "--target",
       "ES2022",

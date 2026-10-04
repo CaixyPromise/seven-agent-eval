@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -37,9 +36,9 @@ func validateCandidates(p Plan, d Discovery) error {
 	if err != nil {
 		return err
 	}
-	if filepath.Ext(target.Path) != ".py" {
+	if !executableScript(target.Path) {
 		if target.Descriptor["type"] != "http" {
-			return errors.New("target parameter comparison requires HTTP or Python subject")
+			return errors.New("target parameter comparison requires HTTP or executable subject")
 		}
 		if !hasParameterMapping(target.Descriptor["request"]) {
 			return errors.New("HTTP target parameters require explicit $parameters request mapping")
@@ -241,7 +240,7 @@ func (e *Engine) preflightParameters(r *Run, cases []Case) error {
 	if err != nil {
 		return err
 	}
-	if filepath.Ext(target.Path) == ".py" {
+	if executableScript(target.Path) {
 		return nil
 	}
 	path, err := SafePath(e.Root, target.Path)

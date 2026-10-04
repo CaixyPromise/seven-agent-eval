@@ -1,4 +1,4 @@
-# 第四阶段进度：T10 参数比较
+# 第四阶段进度：T10 参数比较与 T11 TypeScript 扩展
 
 沿用 `codex/agent-rag-phase3` 和单一工作线，不创建新工作树、独立任务或远程仓库。
 
@@ -6,8 +6,8 @@
 
 - 第三阶段受控闭环：`8d5b1f4`。
 - F1 checkpoint：`88e2211`，本地提交；收 checkpoint 前 `make test` 退出 0。
-- T10 第一轮已交付：明确候选、冻结数据、串行调用、配对比较、样本下钻与结果包迁移。本机受控验收于 2026-09-28 通过，2026-10-05 审查并刷新验收后收本地 checkpoint。第四阶段整体尚未完成，T11 未启动。
-- 本阶段仅候选配置比较；没有自动搜索，也没有同时实施 T11 TypeScript SDK。
+- T10 第一轮已交付：明确候选、冻结数据、串行调用、配对比较、样本下钻与结果包迁移。本机受控验收于 2026-09-28 通过，2026-10-05 审查并刷新验收后形成 `5c2356e`。
+- T11 从 `5c2356e` 连续实施；新增扩展不扩大 T10 的自动搜索、共享环境与真实平台验收边界。最新状态见本文末尾 T11 记录。
 
 ## 与原任务卡对齐
 
@@ -100,4 +100,81 @@ git diff --check
 - 调优依据只是同案例有效观测差值，不是显著性检验、自动搜索或唯一最优建议；未确认／不一致的参数证据应一并查看。
 - 本轮复用已批准的 Ant Design 报告壳，没有重做整页图像原型；新增组件分目录、图表惰性加载，统计计算不进入 React。
 - 已知非阻断风险：Vite 主 chunk 约 843 KiB、共享 ECharts 约 536 KiB；比较卡约 6 KiB、图表约 0.87 KiB，为独立 lazy chunk。没有将全局分包重构扩入 T10。
-- 后续仍为 T11、多参数实际平台验证、T12 容量/故障门槛、T13 安装发行与 T14 真实端到端验收；不扩大本轮为这些能力的交付。
+- T10 后续仍为多参数实际平台验证、交错/repeat/holdout 增量；T12 容量/故障门槛、T13 安装发行与 T14 真实端到端验收不计入 T11。
+
+## T11：TypeScript 扩展与通用 KPI（2026-10-05）
+
+状态：T11 开发环境闭环已验收，形成本地 checkpoint `feat: deliver TypeScript evaluation extensions`（准确 SHA 见本文件最近提交）。不推送；父任务文档独立保留。T10 第一轮与 T11 已交付，不表示 T10 后续增量或第五阶段已完成。
+
+### 实现范围
+
+- Go esbuild 编译 Package 内 TS/JS ESM，SDK、本地相对模块和 `node:` 内置模块；SDK 使用独立 pnpm 锁文件，Node 20.19.5。普通注册函数覆盖 Subject/Evaluator/Processor/Conclusion，同步/Promise 与 Subject create/cleanup。
+- JSON Schema 生成 TypeScript 交换类型；context 使用 snake_case。Go 共用 worker 的错误、超时、取消和输出上限语义；console 写 stderr。共享大整数/null/false/zero/状态 fixture 在 Go、Python、Node 间往返。
+- 离线与 stream 冻结源文件、helper、SDK/worker、锁文件、编译入口、摘要与运行时版本；调用读取并校验快照。TS Subject 复用 Episode 会话隔离、顺序、运行结束清理和 T10 参数回执。
+- ProcessorOutput 增加可选 `report` JSON Pointer 映射；Go 校验、React 与独立 HTML 一致解析，保留 1.0 旧包。多个 provider 不合并，缺失不补零，旧 builtin 身份才适用兼容回退。内置统计新增映射但保留原 data。
+- `examples/typescript` 提供 TS Processor + helper、JS Conclusion、Python 对照、关闭与冲突计划。`make acceptance-typescript` 生成 `artifacts/t11/acceptance.json`、`typescript.seven.eval`、`report.html`，删除临时 Package 后在双运行时缺失的查看器核对完整 Run。
+
+### 受控检查矩阵
+
+| 检查 | 证据入口 |
+|---|---|
+| 四类扩展、同步/异步、协议日志、数值无损 | SDK 5 项测试；TestNodeWorkerKindsAndLossless / TestCrossLanguageFixture |
+| 非法导入、缺 descriptor、重复 ID、kind 不符、helper 忽略、Node 缺失不影响 Python | TestNodeRestrictedImportsAndUnavailable / TestNodeDiscoveryDiagnostics |
+| 源码冻结、非法 KPI、多个 provider | TestNodeSnapshotAndKPI / TestReportMappingValidationAndConflict；Web domain 测试 |
+| Promise rejection、进程退出、污染、超量、NaN、undefined、超时、取消不重放 | TestNodeFailureAndCancellation / TestNodeCancellationPreservesCompletedCases |
+| Episode 顺序、隔离、清理、references 不进入 Subject | TestNodeEpisodeLifecycleAndIsolation |
+| TS stream 评分、Processor 窗口、judge 未采样/预算和执行错误 | TestNodeStreamExtensions / TestNodeJudgePolicyMissingAndErrors |
+| 候选参数传递与目标回执 | TestNodeComparisonReceipts；既有 comparison 回归 |
+| Python/TS 统计、结论、证据一致，删除 Package 后双运行时缺失重开 | scripts/typescript_acceptance.py |
+
+### 浏览器证据与视觉复核
+
+使用独立 Playwright Chrome 会话 `t11`，真实 Go server 与 Vite 构建产物。1536×1024 桌面和 390×844 窄屏，DPR 1，100% 缩放。本轮不宣称重新完成第二阶段全部 200% / reduced-motion / 故障矩阵。
+
+证据目录：`output/playwright/t11/`（忽略的本地产物）。实际下载文件：`artifacts/t11/browser.seven.eval`。
+
+- PASS：发现页实际点击 typescript 计划，完成 5 条样本；首页显示 TS `team-summary@1.0.0` 的 5 / 100% / 2，不依赖 builtin 身份。
+- PASS：自定义 JS Conclusion、wrong 样本抽屉、参考匹配 false 与证据不足状态；处理器页可追溯原始数据与 report 映射。
+- PASS：conflict 计划显示三个缺失 KPI、来源冲突提示，保留两个输出；missing 计划显示三个 `—`，总样本数仍为 5。
+- PASS：桌面、390×844 窄屏、局部横向表格滚动及可访问的导出动作。截图 `report-desktop.png`、`report-mobile.png`、`sample-drawer.png`、`kpi-conflict.png`、`kpi-missing.png`。
+- PASS：最终构建重新启动计划，实际下载 `20261004T184053-cdc2825d73d4990b`；停止源服务并删除本轮临时 Package 后，在另一空目录设置 `SEVEN_EVAL_NODE=/does-not-exist`、`SEVEN_EVAL_PYTHON=/does-not-exist` 重开。原服务与查看器完整 Run API SHA-256 均为 `6fa5b74c8b50c1d3cd8b116b0d4e84d190807ecd02c6e6c0a253e192f18b2970`，包含指标、证据、结论、码表和有效配置；独立 HTML 保留首页统计及原始输出。截图 `portable-viewer.png`。
+- 首轮浏览器 Run 为 `20261004T182902-f5c8fe8935ff2294`；最终下载对应后一个 Run。缺失/冲突/抽屉截图来自同一工作区首轮交互，最终构建刷新主报告、窄屏和独立查看器截图，没有用旧阶段截图代替。
+
+### 最终命令与退出结果
+
+2026-10-05，当前源码最后一次产品修改后执行：
+
+| 命令 | 退出码 / 结果 |
+|---|---|
+| `make setup` | 0；两个 pnpm 锁文件、uv 环境正常 |
+| `make test` | 0；Go race 全包、SDK 5 项、Web 11 项、Python 26 项、SDK/示例/Web 类型检查、Vite 构建 |
+| `go vet ./...` | 0 |
+| `make build` | 0；Node worker、前端与 Go CLI |
+| `uv run --project sdk/python python scripts/acceptance.py` | 0；离线、HTTP、参考不泄漏、源删除后校验 |
+| `uv run --project sdk/python python scripts/live_acceptance.py` | 0；ACK/重启、revision、预算、exporter、窗口在线/离线一致 |
+| `uv run --project sdk/python python scripts/phase3_acceptance.py` | 0；通用 HTTP RAG、K 隔离、缺失语义与迁移 |
+| `uv run --project sdk/python python scripts/seven_acceptance.py` | 0；受控 SSE/Episode，真实环境仍 NOT RUN |
+| `uv run --project sdk/python python scripts/comparison_acceptance.py` | 0；3 候选/15 调用、回执、配对统计、无 Python 重开 |
+| `uv run --project sdk/python python scripts/typescript_acceptance.py` | 0；TS/Python 等价、关闭/冲突、删除 Package、无 Node/Python 完整重开；也是 `make acceptance-typescript` 的验收体 |
+| `seven-eval verify` 新 TS 包、浏览器下载包 | 0 |
+| `seven-eval verify` 旧 phase1/blue-browser、phase2-closeout/window、phase4/20260928T070339 比较包 | 全部 0，保留 1.0 兼容 |
+| `git diff --check` | 0 |
+
+最终自动产物 `artifacts/t11/acceptance.json` 的 Run 为 `20261004T183956-e4c63b7da7f5f2b9`；浏览器包是独立真实 UI 运行，ID 不同，统计一致。产物与截图按既有 ignore 规则不提交，生成脚本及记录提交。
+
+| Before | After | Why |
+|---|---|---|
+| 首页依赖 builtin.basic-summary 身份，自定义统计无法进入 KPI | TS 自有身份通过 report 映射显示 5 / 100% / 2 | 数值由 Processor 提供，不在 UI 重算 |
+| 多个统计输出没有首页来源决策 | 两个显式 provider 显示 `—` 和“首页指标存在多个来源”，原始输出保留 | 避免静默选择和重复计算 |
+| 统计关闭不能被误读成零值 | 三个统计 KPI 显示 `—`，总样本数仍为 Run 的 5 | 保持缺失与数值零区别 |
+| 新扩展可能引入额外页面布局 | 保留既有蓝色 Ant Design 报告，窄屏 KPI 两列重排、表格局部滚动 | 本轮复用批准的产品布局，只增加来源反馈 |
+
+### 边界与风险
+
+- 可信模块顶层代码会在发现时执行；进程隔离不是安全沙箱。第三方 npm 包、CommonJS、JSX、自定义构建链和 npm 发布不在范围内。
+- esbuild 负责转译，SDK/示例由 tsc 检查；用户输出在 Go 按公共 Schema 和 KPI 约束校验。
+- 执行内置预设仍需 Python，独立查看结果包不需要 Node/Python。跨平台依赖安装和干净机器发行由 T13 验收。
+- 窗口、RAG、比较图表沿用既有 Processor 数据契约，没有新增通用图表配置系统。
+- Vite 主 chunk 约 843 KiB、ECharts 约 536 KiB 的既有非阻断警告仍保留；没有扩入全局分包重构。
+- pnpm 提示 esbuild postinstall 被忽略；本机通过锁定的 platform optional dependency 正常完成所有构建。未扩大为跨平台安装成功的声明，T13 仍需干净环境验证。
+- 全部为本机受控样例，不替代真实 Seven、真实模型质量、真实生产、容量 SLA 或剩余格式验收。
