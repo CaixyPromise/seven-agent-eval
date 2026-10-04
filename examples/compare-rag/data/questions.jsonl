@@ -1,0 +1,5 @@
+{"id":"normal","inputs":{"query":"七号知识","scenario":"normal"},"references":{"qrels":{"d1":2,"d2":1}}}
+{"id":"unconfirmed","inputs":{"query":"缺少参数确认","scenario":"unconfirmed"},"references":{"qrels":{"d1":2,"d2":1}}}
+{"id":"mismatch","inputs":{"query":"目标忽略部分配置","scenario":"mismatch"},"references":{"qrels":{"d1":2,"d2":1}}}
+{"id":"missing-reference","inputs":{"query":"没有参考","scenario":"normal"}}
+{"id":"failed","inputs":{"query":"目标出错","scenario":"error"},"references":{"qrels":{"d1":2,"d2":1}}}

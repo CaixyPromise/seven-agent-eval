@@ -27,6 +27,7 @@ import { EpisodeTable } from "./EpisodeTable";
 import { SampleTable } from "./SampleTable";
 import { SampleDrawer } from "./SampleDrawer";
 const RagQualityChart = lazy(() => import("./RagQualityChart"));
+const ComparisonPanel = lazy(() => import("../comparison/ComparisonPanel").then(module=>({default:module.ComparisonPanel})));
 export default function ReportPage({
   id,
   onFinished,
@@ -87,7 +88,7 @@ export default function ReportPage({
         <>
           <header className="page-heading">
             <div>
-              <h1>{run.package.name}</h1>
+              <h1>{run.comparison?"参数比较 · ":""}{run.package.name}</h1>
               <p className="run-id">
                 {formatDate(run.created_at)} · {run.id}
               </p>
@@ -134,7 +135,7 @@ export default function ReportPage({
           <div className="run-progress">
             <StatusBadge status={run.status} />
             <span>
-              {run.completed} / {run.total} 条已处理
+              {run.completed} / {run.total} {run.comparison?"次调用已处理":"条已处理"}
             </span>
             <Progress
               aria-label="样本处理进度"
@@ -163,7 +164,7 @@ export default function ReportPage({
           ) : null}
           <div className="summary-grid">
             <Card className="summary-card">
-              <Statistic title="样本总数" value={run.total} />
+              <Statistic title={run.comparison?"计划调用数":"样本总数"} value={run.total} />
             </Card>
             <Card className="summary-card">
               <Statistic
@@ -213,6 +214,7 @@ export default function ReportPage({
               </p>
             )}
           </Card>
+          {run.comparison?<Suspense fallback={<LoadingState label="正在加载候选比较"/>}><ComparisonPanel run={run} summary={basic?.comparison}/></Suspense>:null}
           {basic?.rag_quality?.length ? (
             <Suspense fallback={<LoadingState label="正在加载检索质量图表" />}>
               <RagQualityChart groups={basic.rag_quality} />

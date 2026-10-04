@@ -2,6 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://seven.local/exchange.json",
   "$defs": {
+    "candidate": {"type":"object","required":["id","target_parameters"],"properties":{"id":{"type":"string","pattern":"^[a-zA-Z0-9][a-zA-Z0-9._-]*$"},"target_parameters":{"type":"object","minProperties":1}},"additionalProperties":false},
+    "comparison": {"type":"object","required":["baseline_id","case_ids","input_digest"],"properties":{"baseline_id":{"type":"string"},"case_ids":{"type":"array","uniqueItems":true,"items":{"type":"string"}},"input_digest":{"type":"string"}},"additionalProperties":false},
+    "parameter_receipt": {"type":"object","required":["requested","state"],"properties":{"requested":{"type":"object"},"applied":{"type":"object"},"state":{"enum":["target_confirmed","mismatch","unconfirmed"]}},"additionalProperties":false},
     "source": {
       "type": "object", "required": ["id", "version", "format"],
       "properties": {
@@ -57,6 +60,7 @@
     "subject_result": {
       "type": "object",
       "properties": {
+        "parameter_receipt": {"$ref":"#/$defs/parameter_receipt"},
         "response": {},
         "contexts": {
           "type": "array",
@@ -278,6 +282,8 @@
     "plan": {
       "type": "object",
       "properties": {
+        "target_parameters":{"type":"object"},
+        "candidates":{"type":"array","minItems":2,"maxItems":8,"items":{"$ref":"#/$defs/candidate"}},
         "schema_version": {
           "const": "evaluate.plan/v1"
         },
@@ -518,6 +524,7 @@
     "run": {
       "type": "object",
       "properties": {
+        "comparison":{"$ref":"#/$defs/comparison"},
         "schema_version": {
           "const": "1.0"
         },

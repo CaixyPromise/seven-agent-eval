@@ -20,10 +20,10 @@ export type Metric = {
 };
 export type CaseResult = {
   redaction_applied?: boolean;
-  case: { id: string; inputs: unknown; references?: unknown; metadata?: {episode_id?: string; turn_id?: string} };
+  case: { id: string; inputs: unknown; references?: unknown; metadata?: {episode_id?: string; turn_id?: string; seven_eval_candidate?: string; seven_eval_case_id?: string} };
   status: string;
   reason?: string;
-  result: { response: unknown; contexts?: unknown; retrieval?: RetrievalDocument[]; tools?: unknown[]; citations?: unknown[] };
+  result: { response: unknown; contexts?: unknown; retrieval?: RetrievalDocument[]; tools?: unknown[]; citations?: unknown[]; parameter_receipt?: {requested: Record<string,unknown>; applied?: Record<string,unknown>; state: string} };
   metrics: Metric[];
 };
 export type RunSummary = {
@@ -35,6 +35,7 @@ export type RunSummary = {
   total: number;
 };
 export type Run = RunSummary & {
+  comparison?: {baseline_id: string; case_ids: string[]; input_digest: string};
   dataset_revision?: unknown;
   episodes?: EpisodeResult[];
   scope?: WindowScope;
@@ -57,11 +58,24 @@ export type Series = {
   parameters?: unknown;
 };
 export type BasicSummary = {
+  comparison?: ComparisonSummary;
   rag_quality?: RagQuality[];
   scored?: number;
   coverage?: number;
   failure_ids?: string[];
   series?: Series[];
+};
+export type ComparisonRow = {
+  id: string; candidate_id: string; metric_id: string; evaluator: string; parameters: Record<string,unknown>;
+  mean: number | null; observed: number; total: number; paired: number;
+  baseline_mean: number | null; candidate_mean: number | null; delta: number | null; case_ids: string[];
+};
+export type ComparisonSummary = {
+  baseline_id: string; input_digest: string; note: string;
+  candidates: {id: string; target_parameters: Record<string,unknown>; processed: number; total: number; failed: number; receipts: Record<string,number>}[];
+  rows: ComparisonRow[];
+  suggestions: {candidate_id: string; metric_id: string; evaluator: string; parameters: Record<string,unknown>; paired: number; delta: number; case_ids: string[]; direction: string}[];
+  quality_series: {id: string; evaluator: string; parameters: Record<string,unknown>; points: {id: string; precision: number|null; recall: number|null; f1: number|null}[]}[];
 };
 export type RagQuality = {
   id: string;

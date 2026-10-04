@@ -33,6 +33,7 @@ class JudgeTest(unittest.TestCase):
     def test_http_error_timeout_and_malformed_are_distinct(self):
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
                 if self.path=="/slow":
                     time.sleep(.15)
                 self.send_response(503 if self.path=="/error" else 200)
@@ -50,3 +51,14 @@ class JudgeTest(unittest.TestCase):
                     self.assertEqual(observation["reason"],reason)
                     self.assertIsNone(observation["value"])
         finally: server.shutdown();server.server_close();thread.join()
+
+    def test_response_read_reset_is_transport_error_without_retry(self):
+        ctx={"case":{"id":"q"},"result":{"response":"ok","retrieval":[{"id":"a","text":"ok"}]},"status":"completed"}
+        with patch.dict(os.environ,{"SEVEN_EVAL_JUDGE_ENDPOINT":"http://127.0.0.1:1","SEVEN_EVAL_JUDGE_MODEL":"controlled"}), patch("seven_evaluate.judge.urllib.request.build_opener") as opener:
+            opener.return_value.open.return_value.__enter__.return_value.read.side_effect=ConnectionResetError("private upstream diagnostic")
+            observation=judge.evaluate(ctx)[0]
+            self.assertEqual(observation["status"],"error")
+            self.assertEqual(observation["reason"],"judge_transport_error")
+            self.assertIsNone(observation["value"])
+            self.assertNotIn("private upstream",json.dumps(observation))
+            opener.return_value.open.assert_called_once()

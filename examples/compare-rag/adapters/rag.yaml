@@ -1,0 +1,12 @@
+id: rag
+version: '1'
+type: http
+endpoint: http://127.0.0.1:7455
+request:
+  query: $.query
+  scenario: $.scenario
+  parameters: $parameters
+response_path: $.answer
+retrieval_path: $.retrieval
+usage_path: $.usage
+applied_parameters_path: $.effective_parameters

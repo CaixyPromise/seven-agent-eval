@@ -372,6 +372,9 @@ func Resolve(root string, d Discovery, id string) (Effective, error) {
 			}
 		}
 	}
+	if err := validateCandidates(out.Plan, d); err != nil {
+		return out, err
+	}
 	pick := func(ptr *[]string, fallback string) []string {
 		if ptr == nil {
 			return []string{fallback}

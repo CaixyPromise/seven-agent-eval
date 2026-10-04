@@ -69,6 +69,10 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 		return Run{}, planError(err)
 	}
 	var catalogs map[string]any
+	work, comparison, err := workCases(cases, effective.Plan)
+	if err != nil {
+		return Run{}, planError(err)
+	}
 	c, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err = e.Worker.Call(c, "catalogs", map[string]any{}, &catalogs); err != nil {
@@ -96,7 +100,7 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 		}
 	}
 	r := Run{SchemaVersion: Version, ID: NewID(), Package: d.Package, CreatedAt: time.Now().UTC(), Status: "running",
-		Total: len(cases), Effective: effective, DatasetDigest: digest, Cases: []CaseResult{}, Outputs: []ProcessorOutput{},
+		Total: len(work), Comparison: comparison, Effective: effective, DatasetDigest: digest, Cases: []CaseResult{}, Outputs: []ProcessorOutput{},
 		Conclusions: []Conclusion{}, Catalogs: catalogs}
 	for _, c := range cases {
 		if id, ok := c.Metadata["episode_id"].(string); ok {
@@ -118,6 +122,9 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 		}
 	}
 	r.DatasetRevision = revision
+	if err = e.preflightParameters(&r, work); err != nil {
+		return Run{}, planError(err)
+	}
 	if err = e.snapshot(&r); err != nil {
 		return Run{}, err
 	}
@@ -253,7 +260,7 @@ func (e *Engine) ProcessExisting(ctx context.Context, r *Run) error {
 	}
 	for _, ref := range r.Effective.Processors {
 		var output ProcessorOutput
-		err := e.extension(ctx, r, ref, "processor", "processor/process", map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "window": r.Scope}, &output)
+		err := e.extension(ctx, r, ref, "processor", "processor/process", map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "window": r.Scope, "comparison": r.Comparison, "candidates": r.Effective.Plan.Candidates}, &output)
 		if err == nil {
 			err = protocol.Validate("processor_output", output)
 		}
@@ -440,6 +447,10 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 		}
 		return r, errors.New(r.Message)
 	}
+	cases, comparison, err := workCases(cases, r.Effective.Plan)
+	if err != nil || Digest(comparison) != Digest(r.Comparison) {
+		return r, errors.New("comparison input changed after preparation")
+	}
 	for _, c := range cases {
 		if ctx.Err() != nil {
 			break
@@ -481,6 +492,13 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 			cr.Result, err = e.invoke(op, &r, c)
 		}
 		stop()
+		if requested := targetParameters(r.Effective.Plan, c); len(requested) > 0 {
+			var applied map[string]any
+			if cr.Result.ParameterReceipt != nil {
+				applied = cr.Result.ParameterReceipt.Applied
+			}
+			cr.Result.ParameterReceipt = parameterReceipt(requested, applied)
+		}
 		if err != nil {
 			cr.Status = "error"
 			cr.Reason = "subject_error"
@@ -571,7 +589,7 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 	for _, ref := range r.Effective.Processors {
 		ensureGrace()
 		var output ProcessorOutput
-		input := map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "episodes": r.Episodes}
+		input := map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "episodes": r.Episodes, "comparison": r.Comparison, "candidates": r.Effective.Plan.Candidates}
 		er := e.extension(finalCtx, &r, ref, "processor", "processor/process", input, &output)
 		if er == nil {
 			er = protocol.Validate("processor_output", output)
@@ -669,7 +687,7 @@ func (e *Engine) invoke(ctx context.Context, r *Run, c Case) (SubjectResult, err
 		if err != nil {
 			return result, err
 		}
-		err = e.Worker.Call(ctx, "subject/invoke", map[string]any{"path": path, "context": map[string]any{"inputs": c.Inputs, "session": ctx.Value(subjectSessionKey{})}}, &result)
+		err = e.Worker.Call(ctx, "subject/invoke", map[string]any{"path": path, "context": map[string]any{"inputs": c.Inputs, "target_parameters": targetParameters(r.Effective.Plan, c), "session": ctx.Value(subjectSessionKey{})}}, &result)
 		if err == nil {
 			err = protocol.Validate("subject_result", result)
 		}
@@ -692,7 +710,7 @@ func (e *Engine) invoke(ctx context.Context, r *Run, c Case) (SubjectResult, err
 	}
 	payload := c.Inputs
 	if cfg.Request != nil {
-		payload, err = mapValue(cfg.Request, c.Inputs)
+		payload, err = mapRequest(cfg.Request, c.Inputs, targetParameters(r.Effective.Plan, c))
 		if err != nil {
 			return result, err
 		}
@@ -787,6 +805,13 @@ func (e *Engine) invoke(ctx context.Context, r *Run, c Case) (SubjectResult, err
 	}
 	latency := float64(time.Since(start).Microseconds()) / 1000
 	result.LatencyMS = &latency
+	if cfg.AppliedParametersPath != "" && len(targetParameters(r.Effective.Plan, c)) > 0 {
+		if value, er := selectValue(raw, cfg.AppliedParametersPath); er == nil {
+			if applied, ok := value.(map[string]any); ok {
+				result.ParameterReceipt = parameterReceipt(targetParameters(r.Effective.Plan, c), applied)
+			}
+		}
+	}
 	return result, protocol.Validate("subject_result", result)
 }
 func selectValue(input any, path string) (any, error) {

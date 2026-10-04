@@ -33,6 +33,7 @@ def dispatch(method, params):
                                                           "processor/process", "conclusion/conclude"]}
     if method == "catalogs":
         return {**basic.CATALOG, "metrics":basic.CATALOG["metrics"] + [{"id":mid,"name":mid,"type":"number" if mid.startswith(("rag.","judge.")) or mid=="tool.repeated" else "boolean"} for mid in rag.METRICS+agent.METRICS+["rag.faithfulness","judge.latency.ms","judge.usage.tokens","judge.usage.cost"]],
+                "conclusions":basic.CATALOG["conclusions"] + [{"id":"comparison_checked","description":"同数据候选配置的配对比较；不代表通用业务通过或唯一最优"}],
                 "reasons":basic.CATALOG["reasons"] + [{"id":code,"description":text} for code,text in [("no_positive_reference","没有正相关参考文档"),("no_citations","没有声明引用"),("judge_unconfigured","未配置模型评分"),("judge_timeout","模型评分超时"),("judge_http_error","模型评分服务未完成请求"),("judge_transport_error","模型评分连接未完成"),("judge_response_invalid","模型评分结果格式无效"),("judge_configuration_invalid","模型评分配置无效")]]}
     path = params.get("path")
     fn = load(path) if path else None

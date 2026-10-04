@@ -1,0 +1,1 @@
+{"kind":"plan","value":{"schema_version":"evaluate.plan/v1","id":"compare","mode":"invoke","source":"source:questions","subject":"adapter:rag","preset":"builtin.rag-basic@1","parameters":{"k":[1,5]},"candidates":[{"id":"baseline","target_parameters":{"top_k":1}},{"id":"expanded","target_parameters":{"top_k":3}}]}}

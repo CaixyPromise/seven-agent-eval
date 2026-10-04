@@ -57,6 +57,9 @@ def conclude(ctx):
     summary=next((o["data"] for o in ctx["outputs"] if o["processor"]=="builtin.basic-summary@1"),None)
     if summary is None:
         return [{"handler":"builtin.agent-conclusion@1","code":"dependency_missing","level":"warning","summary":"当前统计没有提供 Agent 汇总，结论不可计算。"}]
+    if summary.get("comparison"):
+        from .comparison import conclude as comparison_conclude
+        return comparison_conclude(summary)
     rules=[s for s in summary["series"] if s["metric_id"] in ("tool.expected","tool.arguments","tool.execution","agent.effect","output.exact","output.schema")]
     failures=sum(s.get("failed",0) for s in rules)
     effects=sum(s["observed"] for s in rules if s["metric_id"]=="agent.effect")

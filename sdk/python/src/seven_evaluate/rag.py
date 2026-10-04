@@ -85,6 +85,9 @@ def conclude(ctx):
     summary=next((o["data"] for o in ctx["outputs"] if o["processor"]=="builtin.basic-summary@1"),None)
     if summary is None:
         return [{"handler":"builtin.rag-conclusion@1","code":"dependency_missing","level":"warning","summary":"当前统计没有提供 RAG 汇总，结论不可计算。"}]
+    if summary.get("comparison"):
+        from .comparison import conclude as comparison_conclude
+        return comparison_conclude(summary)
     rules=[s for s in summary["series"] if s["metric_id"].startswith("citation.") or s["metric_id"] in ("output.schema","output.exact")]
     failures=sum(s.get("failed",0) for s in rules)
     unavailable=sum(s["total"]-s["observed"] for s in summary["series"] if s["metric_id"].startswith("rag."))

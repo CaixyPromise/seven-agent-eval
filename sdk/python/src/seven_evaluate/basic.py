@@ -103,6 +103,9 @@ def evaluate(ctx):
     return out
 
 def process(ctx):
+    if ctx.get("comparison"):
+        from .comparison import process as comparison_process
+        return comparison_process(ctx)
     cases = ctx["cases"]
     grouped = defaultdict(list)
     for item in cases:
@@ -210,6 +213,9 @@ def conclude(ctx):
     if summary is None:
         return [{"handler": "builtin.basic-conclusion@1", "code": "dependency_missing", "level": "warning",
                  "summary": "基础汇总已关闭或被替换，默认结论无法读取所需统计。"}]
+    if summary.get("comparison"):
+        from .comparison import conclude as comparison_conclude
+        return comparison_conclude(summary)
     rules = [s for s in summary["series"] if s["metric_id"] in ("output.schema", "output.exact")]
     count = sum(s["observed"] for s in rules)
     failures = sum(s.get("failed", 0) for s in rules)

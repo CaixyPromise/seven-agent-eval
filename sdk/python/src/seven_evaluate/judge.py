@@ -51,6 +51,7 @@ def evaluate(ctx):
     except urllib.error.HTTPError: return observation("error",reason="judge_http_error")
     except urllib.error.URLError as exc:
         return observation("error",reason="judge_timeout" if isinstance(exc.reason,TimeoutError) else "judge_transport_error")
+    except OSError: return observation("error",reason="judge_transport_error")
     except (ValueError,KeyError,IndexError,TypeError): return observation("error",reason="judge_response_invalid")
     out=observation("observed",score)
     usage=payload.get("usage") or {}

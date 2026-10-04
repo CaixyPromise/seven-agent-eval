@@ -31,6 +31,8 @@ const reportTemplate = `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 {{with .Scope}}<section><h2>Window / 窗口快照</h2><p>{{.PlanID}} · {{.Start}} — {{.End}} · {{.State}} · 修订 {{.Revision}}</p><p>评分延迟：从接收证据到完成评分计算，包含排队；不等于业务调用耗时。</p></section>{{end}}
 <p>{{.Message}}</p><p>Basic checks describe verified rules, not overall business correctness.</p>
 <section><h2>Conclusions / 结论</h2>{{range .Conclusions}}<p><strong>{{.Code}}</strong> — {{.Summary}}</p>{{else}}<p>Conclusions disabled or unavailable.</p>{{end}}</section>
+{{with .Comparison}}<section><h2>Candidate comparison / 候选参数比较</h2><p>基线 {{.BaselineID}} · 共同案例 {{len .CaseIDs}} 条</p><pre>{{.InputDigest}}</pre></section>{{end}}
+{{range .Outputs}}{{with .Data.comparison}}<section><h2>Paired statistics / 配对统计</h2><p>{{.note}}</p><table><tr><th>候选</th><th>目标参数</th><th>已处理 / 计划</th><th>参数确认</th></tr>{{range .candidates}}<tr><td>{{.id}}</td><td><pre>{{pretty .target_parameters}}</pre></td><td>{{.processed}} / {{.total}}</td><td>{{pretty .receipts}}</td></tr>{{end}}</table><table><tr><th>指标 / 参数</th><th>候选</th><th>有效均值 / 观测数</th><th>配对案例数</th><th>配对差值</th></tr>{{range .rows}}<tr><td>{{.metric_id}}<pre>{{pretty .parameters}}</pre></td><td>{{.candidate_id}}</td><td>{{pretty .mean}} · {{.observed}} / {{.total}}</td><td>{{.paired}}</td><td>{{pretty .delta}}</td></tr>{{end}}</table></section>{{end}}{{end}}
 <section><h2>Statistics / 统计</h2>{{range .Outputs}}<h3>{{.Processor}}</h3><pre>{{pretty .Data}}</pre>{{else}}<p>Processors disabled or unavailable.</p>{{end}}</section>
 <section><h2>Cases / 样本证据</h2>{{range .Cases}}<details><summary>{{.Case.ID}} · {{.Status}} · {{.Reason}}</summary><h4>Input</h4><pre>{{pretty .Case.Inputs}}</pre><h4>Reference</h4><pre>{{pretty .Case.References}}</pre><h4>Response</h4><pre>{{pretty .Result.Response}}</pre><h4>Contexts</h4><pre>{{pretty .Result.Contexts}}</pre><table><tr><th>Metric</th><th>Status</th><th>Value</th><th>Reason</th></tr>{{range .Metrics}}<tr><td>{{.MetricID}}</td><td>{{.Status}}</td><td>{{pretty .Value}}</td><td>{{.Reason}}</td></tr>{{end}}</table></details>{{end}}</section>
 <section><h2>Structured Evidence / 检索、工具与引用</h2>{{range .Cases}}<details><summary>{{.Case.ID}}</summary><pre>{{pretty .Result}}</pre></details>{{end}}</section>
@@ -59,7 +61,52 @@ func ValidateRun(r Run) error {
 		return errors.New("completed run has missing cases")
 	}
 	seen := map[string]bool{}
+	comparisonInputs := map[string]string{}
+	if r.Comparison == nil && len(r.Effective.Plan.Candidates) > 0 {
+		return errors.New("comparison metadata missing")
+	}
+	if r.Comparison != nil {
+		if err := validateCandidates(r.Effective.Plan, Discovery{Assets: r.Effective.Assets}); err != nil {
+			return err
+		}
+		if len(r.Effective.Plan.Candidates) < 2 || r.Comparison.BaselineID != r.Effective.Plan.Candidates[0].ID || r.Total != len(r.Comparison.CaseIDs)*len(r.Effective.Plan.Candidates) {
+			return errors.New("invalid comparison identity/counts")
+		}
+	}
 	for _, c := range r.Cases {
+		if r.Comparison != nil {
+			original, ok := c.Case.Metadata["seven_eval_case_id"].(string)
+			if !ok {
+				return errors.New("comparison case identity missing")
+			}
+			candidate, ok := c.Case.Metadata["seven_eval_candidate"].(string)
+			if !ok {
+				return errors.New("comparison candidate missing")
+			}
+			found := false
+			for _, id := range r.Comparison.CaseIDs {
+				if id == original {
+					found = true
+				}
+			}
+			if !found {
+				return errors.New("comparison case not in frozen input")
+			}
+			found = false
+			for _, item := range r.Effective.Plan.Candidates {
+				if item.ID == candidate {
+					found = true
+				}
+			}
+			if !found || c.Case.ID != candidate+"/"+original {
+				return errors.New("comparison candidate identity mismatch")
+			}
+			input := Digest([]any{c.Case.Inputs, c.Case.References})
+			if previous, ok := comparisonInputs[original]; ok && previous != input {
+				return errors.New("comparison candidates have different case inputs/references")
+			}
+			comparisonInputs[original] = input
+		}
 		if seen[c.Case.ID] {
 			return errors.New("duplicate case in result")
 		}

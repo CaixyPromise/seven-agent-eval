@@ -1,0 +1,16 @@
+schema_version: evaluate.plan/v1
+id: compare
+mode: invoke
+preset: builtin.rag-basic@1
+source: source:questions
+subject: adapter:rag
+timeout_seconds: 5
+parameters:
+  k: [1, 5]
+candidates:
+  - id: top-1
+    target_parameters: {top_k: 1, strategy: ranked}
+  - id: top-3
+    target_parameters: {top_k: 3, strategy: ranked}
+  - id: top-3-reversed
+    target_parameters: {top_k: 3, strategy: reversed}

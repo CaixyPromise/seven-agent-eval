@@ -27,7 +27,7 @@ export function PlanCard({
               {asset.id}
             </Button>
             <Tag color="blue" variant="filled">
-              {asset.descriptor?.mode === "invoke" ? "调用目标" : "已有回答"}
+              {asset.descriptor?.candidate_count?`${asset.descriptor.candidate_count} 个候选比较`:asset.descriptor?.mode === "invoke" ? "调用目标" : "已有回答"}
             </Tag>
           </div>
           <p>
@@ -38,6 +38,7 @@ export function PlanCard({
             )}
           </p>
           <p className="recipe">{recipeName(asset)}</p>
+          {asset.descriptor?.candidate_count?<p className="muted">每个候选会重新调用目标，使用同一批案例。</p>:null}
           <div className="plan-actions">
             <Button
               type="primary"

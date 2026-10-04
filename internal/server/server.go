@@ -109,6 +109,9 @@ func (s *Server) Handler() http.Handler {
 					descriptor[key] = value
 				}
 			}
+			if candidates, ok := asset.Descriptor["candidates"].([]any); ok {
+				descriptor["candidate_count"] = len(candidates)
+			}
 			if asset.Kind == "mapping" {
 				if fields, ok := asset.Descriptor["fields"].(map[string]any); ok {
 					descriptor["field_count"] = len(fields)

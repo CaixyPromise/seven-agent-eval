@@ -33,20 +33,42 @@ type Discovery struct {
 	Assets  []Asset `json:"assets"`
 }
 type Plan struct {
-	SchemaVersion  string         `json:"schema_version" yaml:"schema_version"`
-	ID             string         `json:"id" yaml:"id"`
-	Preset         string         `json:"preset" yaml:"preset"`
-	Mode           string         `json:"mode" yaml:"mode"`
-	Dataset        string         `json:"dataset,omitempty" yaml:"dataset"`
-	Source         string         `json:"source,omitempty" yaml:"source,omitempty"`
-	Mapping        string         `json:"mapping,omitempty" yaml:"mapping,omitempty"`
-	Parameters     map[string]any `json:"parameters,omitempty" yaml:"parameters,omitempty"`
-	Subject        string         `json:"subject,omitempty" yaml:"subject,omitempty"`
-	Evaluators     *[]string      `json:"evaluators" yaml:"evaluators"`
-	Processors     *[]string      `json:"processors" yaml:"processors"`
-	Conclusions    *[]string      `json:"conclusions" yaml:"conclusions"`
-	TimeoutSeconds int            `json:"timeout_seconds" yaml:"timeout_seconds"`
-	Stream         *StreamConfig  `json:"stream,omitempty" yaml:"stream,omitempty"`
+	TargetParameters map[string]any `json:"target_parameters,omitempty" yaml:"target_parameters,omitempty"`
+	Candidates       []Candidate    `json:"candidates,omitempty" yaml:"candidates,omitempty"`
+	SchemaVersion    string         `json:"schema_version" yaml:"schema_version"`
+	ID               string         `json:"id" yaml:"id"`
+	Preset           string         `json:"preset" yaml:"preset"`
+	Mode             string         `json:"mode" yaml:"mode"`
+	Dataset          string         `json:"dataset,omitempty" yaml:"dataset"`
+	Source           string         `json:"source,omitempty" yaml:"source,omitempty"`
+	Mapping          string         `json:"mapping,omitempty" yaml:"mapping,omitempty"`
+	Parameters       map[string]any `json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	Subject          string         `json:"subject,omitempty" yaml:"subject,omitempty"`
+	Evaluators       *[]string      `json:"evaluators" yaml:"evaluators"`
+	Processors       *[]string      `json:"processors" yaml:"processors"`
+	Conclusions      *[]string      `json:"conclusions" yaml:"conclusions"`
+	TimeoutSeconds   int            `json:"timeout_seconds" yaml:"timeout_seconds"`
+	Stream           *StreamConfig  `json:"stream,omitempty" yaml:"stream,omitempty"`
+}
+
+// Candidate changes target behavior, never the shared evaluator configuration.
+type Candidate struct {
+	ID               string         `json:"id" yaml:"id"`
+	TargetParameters map[string]any `json:"target_parameters" yaml:"target_parameters"`
+}
+
+// Comparison freezes the common normalized case identities before any invocation.
+type Comparison struct {
+	BaselineID  string   `json:"baseline_id"`
+	CaseIDs     []string `json:"case_ids"`
+	InputDigest string   `json:"input_digest"`
+}
+
+// ParameterReceipt is a target assertion, not independent proof of implementation.
+type ParameterReceipt struct {
+	Requested map[string]any `json:"requested"`
+	Applied   map[string]any `json:"applied,omitempty"`
+	State     string         `json:"state"`
 }
 
 // StreamConfig is intentionally small: the plan owns scoring policy while the
@@ -103,14 +125,15 @@ type Evidence struct {
 	Value any    `json:"value"`
 }
 type SubjectResult struct {
-	Response  any                 `json:"response"`
-	Contexts  []any               `json:"contexts,omitempty"`
-	Usage     map[string]any      `json:"usage,omitempty"`
-	LatencyMS *float64            `json:"latency_ms,omitempty"`
-	Retrieval []RetrievalDocument `json:"retrieval,omitempty"`
-	Tools     []ToolEvidence      `json:"tools,omitempty"`
-	Citations []Citation          `json:"citations,omitempty"`
-	Trace     []any               `json:"trace,omitempty"`
+	ParameterReceipt *ParameterReceipt   `json:"parameter_receipt,omitempty"`
+	Response         any                 `json:"response"`
+	Contexts         []any               `json:"contexts,omitempty"`
+	Usage            map[string]any      `json:"usage,omitempty"`
+	LatencyMS        *float64            `json:"latency_ms,omitempty"`
+	Retrieval        []RetrievalDocument `json:"retrieval,omitempty"`
+	Tools            []ToolEvidence      `json:"tools,omitempty"`
+	Citations        []Citation          `json:"citations,omitempty"`
+	Trace            []any               `json:"trace,omitempty"`
 }
 
 // MarshalJSON preserves provided empty evidence separately from absent evidence.
@@ -169,6 +192,7 @@ type Conclusion struct {
 	Summary string `json:"summary"`
 }
 type Run struct {
+	Comparison      *Comparison       `json:"comparison,omitempty"`
 	SchemaVersion   string            `json:"schema_version"`
 	ID              string            `json:"id"`
 	Package         Package           `json:"package"`
@@ -287,17 +311,18 @@ type Event struct {
 	Data     any             `json:"data,omitempty"`
 }
 type HTTPConfig struct {
-	ID            string         `json:"id" yaml:"id"`
-	Version       string         `json:"version" yaml:"version"`
-	Type          string         `json:"type" yaml:"type"`
-	Endpoint      string         `json:"endpoint" yaml:"endpoint"`
-	Request       map[string]any `json:"request" yaml:"request"`
-	ResponsePath  string         `json:"response_path" yaml:"response_path"`
-	ContextsPath  string         `json:"contexts_path" yaml:"contexts_path"`
-	UsagePath     string         `json:"usage_path" yaml:"usage_path"`
-	AuthEnv       string         `json:"auth_env" yaml:"auth_env"`
-	RetrievalPath string         `json:"retrieval_path" yaml:"retrieval_path"`
-	ToolsPath     string         `json:"tools_path" yaml:"tools_path"`
-	CitationsPath string         `json:"citations_path" yaml:"citations_path"`
-	WorkspaceID   string         `json:"workspace_id" yaml:"workspace_id"`
+	AppliedParametersPath string         `json:"applied_parameters_path" yaml:"applied_parameters_path"`
+	ID                    string         `json:"id" yaml:"id"`
+	Version               string         `json:"version" yaml:"version"`
+	Type                  string         `json:"type" yaml:"type"`
+	Endpoint              string         `json:"endpoint" yaml:"endpoint"`
+	Request               map[string]any `json:"request" yaml:"request"`
+	ResponsePath          string         `json:"response_path" yaml:"response_path"`
+	ContextsPath          string         `json:"contexts_path" yaml:"contexts_path"`
+	UsagePath             string         `json:"usage_path" yaml:"usage_path"`
+	AuthEnv               string         `json:"auth_env" yaml:"auth_env"`
+	RetrievalPath         string         `json:"retrieval_path" yaml:"retrieval_path"`
+	ToolsPath             string         `json:"tools_path" yaml:"tools_path"`
+	CitationsPath         string         `json:"citations_path" yaml:"citations_path"`
+	WorkspaceID           string         `json:"workspace_id" yaml:"workspace_id"`
 }

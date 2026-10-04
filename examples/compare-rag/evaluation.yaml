@@ -1,0 +1,4 @@
+schema_version: evaluate.package/v1
+id: compare-rag
+version: '1'
+name: RAG 候选参数对照
