@@ -11,13 +11,14 @@ import (
 // Persist the assembled span set, including both clocks, before acknowledging
 // transport. Late spans advance revision and never repeat a production request.
 type otlpAssembly struct {
-	Key       string     `json:"key"`
-	PlanID    string     `json:"plan_id"`
-	Resource  []otlpAttr `json:"resource"`
-	Spans     []otlpSpan `json:"spans"`
-	FirstAt   time.Time  `json:"first_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	Revision  int        `json:"revision"`
+	ExpiredSpans map[string]string `json:"expired_spans,omitempty"`
+	Key          string            `json:"key"`
+	PlanID       string            `json:"plan_id"`
+	Resource     []otlpAttr        `json:"resource"`
+	Spans        []otlpSpan        `json:"spans"`
+	FirstAt      time.Time         `json:"first_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	Revision     int               `json:"revision"`
 }
 
 func (m *LiveManager) IngestOTLP(ctx context.Context, body []byte) (IngestResult, error) {
@@ -63,6 +64,41 @@ func (m *LiveManager) IngestOTLP(ctx context.Context, body []byte) (IngestResult
 			key := Digest([]string{id, resource["service.name"], resource["seven.eval.project"], trace, resource["seven.eval.turn.id"]})
 			m.mu.Lock()
 			assembly, exists := m.assemblies[key]
+			if assembly.ExpiredSpans != nil {
+				code := ""
+				for _, span := range incoming {
+					hash, found := assembly.ExpiredSpans[span.SpanID]
+					if !found {
+						code = "DATA_EXPIRED"
+						break
+					}
+					if hash != Digest(span) {
+						code = "EVENT_CONFLICT"
+						break
+					}
+				}
+				if code == "" {
+					result.Duplicate++
+					result.Items = append(result.Items, IngestItem{EventID: trace, Status: "duplicate"})
+				} else {
+					result.Rejected++
+					result.Items = append(result.Items, IngestItem{EventID: trace, Status: "rejected", Code: code})
+				}
+				m.mu.Unlock()
+				continue
+			}
+			expired := false
+			for _, span := range incoming {
+				if span.EndTimeUnixNano > 0 && m.expiredEventLocked(id, time.Unix(0, int64(span.EndTimeUnixNano))) {
+					expired = true
+				}
+			}
+			if expired {
+				result.Rejected++
+				result.Items = append(result.Items, IngestItem{EventID: trace, Status: "rejected", Code: "DATA_EXPIRED"})
+				m.mu.Unlock()
+				continue
+			}
 			if !exists {
 				pending := 0
 				for _, a := range m.assemblies {
@@ -198,6 +234,9 @@ func (m *LiveManager) flushOTLP(ctx context.Context) {
 }
 
 func (m *LiveManager) assemblyEmittedLocked(a otlpAssembly) bool {
+	if a.ExpiredSpans != nil {
+		return true
+	}
 	source := attrs(a.Resource)["service.name"]
 	if source == "" {
 		source = "otlp"

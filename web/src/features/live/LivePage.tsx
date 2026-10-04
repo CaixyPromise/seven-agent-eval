@@ -255,6 +255,7 @@ export default function LivePage() {
       </div>
       {error ? <ErrorNotice code={error} onRetry={() => { void reloadPlans(); void reloadReport(); }} onDismiss={() => setError(null)} /> : null}
       {!plans?.length ? <EmptyState title="还没有可用的持续评分计划" description="在计划中设置 mode: stream 和明确的 trace 或 turn 单位，重新扫描后会显示在这里。" /> : <>
+        {(report?.expired_windows ?? 0) > 0 ? <Alert className="feedback" type="warning" showIcon title="所选时段有已清理的数据" description="当前统计仅包含保留的样本。可以切换时段，或打开已导出的结果包查看清理前的报告。" /> : null}
         {selectedPlan?.paused ? <Alert className="live-paused" type="warning" showIcon title="评分已暂停，接收与持久化仍在继续" description="恢复后会按照接收顺序消化当前积压。" /> : null}
         <div className="live-kpis">
           <Card className="summary-card"><Statistic title="接收量" value={current?.scope.received ?? 0} /></Card>
@@ -263,7 +264,7 @@ export default function LivePage() {
           <Card className="summary-card warning-value"><Statistic title="待处理量" value={selectedPlan?.pending ?? 0} /></Card>
           <Card className="summary-card"><Statistic title={<Tooltip title="从本机接收证据到完成评分计算的耗时，包含排队等待，不等于业务调用耗时。">p95 评分延迟</Tooltip>} value={current?.scope.p95_latency_ms == null ? "—" : Math.round(current.scope.p95_latency_ms)} suffix={current?.scope.p95_latency_ms == null ? undefined : "ms"} /></Card>
         </div>
-        {!report?.windows.length ? <EmptyState title={loading ? "正在读取窗口" : "所选时间内还没有事件"} description="可以调整时间范围，或等待已完成的请求上报。" /> : <>
+        {!report?.windows.length ? <EmptyState title={loading ? "正在读取窗口" : (report?.expired_windows ?? 0) > 0 ? "所选时段没有保留的窗口" : "所选时间内还没有事件"} description={(report?.expired_windows ?? 0) > 0 ? "调整上方时间范围查看其他窗口。" : "可以调整时间范围，或等待已完成的请求上报。"} /> : <>
           {!report.series.length ? <Alert type="info" title="当前处理器未提供窗口统计" description="可以查看已接收样本并导出窗口，评分统计暂不可用。" /> :
           <div className="live-chart-grid">
             <Card title="评分覆盖率趋势" extra={<span className="muted">按事件时间</span>}><LiveChart ariaLabel="评分覆盖率趋势图" option={coverageOption} onPoint={openPoint} /></Card>

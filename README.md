@@ -133,7 +133,7 @@ Source snapshots remain private runtime files and are not included as executable
 
 ## Limits and operation semantics
 
-- This phase runs independent cases sequentially, at most 1000 cases / 32 MiB input, 1 MiB per JSONL record.
+- Offline execution is sequential, at most 1000 cases / 32 MiB input, 1 MiB per JSONL record.
 - HTTP output is capped at 2 MiB, worker output at 8 MiB, export at 64 MiB uncompressed.
 - Per-operation timeout defaults to 120 seconds, configurable up to 300. No Subject retries.
 - Cancelling stops further calls and preserves a partial report; graceful finishing after cancellation
@@ -144,8 +144,31 @@ Source snapshots remain private runtime files and are not included as executable
   configured auth environment values, with redaction_applied recorded; redacted exports may not support
   exact re-evaluation. This is not a general PII detector.
 - Local server only: no remote bind, authentication/multi-tenancy or untrusted code sandbox in phase 1.
-- JSONL and the basic deterministic preset execute today. Production events have schema/examples only.
-  Production ingestion, full Agent/RAG/judge recipes, more industry formats, TS workers, parameter
-  comparison and full platform installers are subsequent tasks, not claimed complete.
+- Controlled offline, live EEP/OTLP JSON, Agent/RAG, Episode, Python/Node extensions and explicit
+  candidate comparison have local acceptance records in `docs/phase2-progress.md`,
+  `docs/phase3-progress.md` and `docs/phase4-progress.md`. These do not claim real production
+  acceptance, arbitrary OTLP graphs, automatic parameter search or cross-platform installation.
+
+## Explicit retention and resilience
+
+Retention is opt-in maintenance, with the server stopped. Preview first, then apply the exact
+digest returned by the preview; changes to authoritative files invalidate it:
+
+```sh
+./bin/seven-eval --package /path/to/package retention preview 2026-10-01T00:00:00Z
+./bin/seven-eval --package /path/to/package retention apply PREVIEW_DIGEST
+make acceptance-resilience
+```
+
+Export required evidence before applying: cleanup deletes evidence bodies, not just the query index.
+Pending windows, referenced runtime snapshots, partial runs and unknown orphan snapshots are protected.
+Deduplication receipts and expired-window ranges remain, so old traffic cannot silently be rescored.
+Exported `.seven.eval` files remain independent. This first maintenance implementation does not promise
+constant memory for unlimited historical receipts or zero-downtime cleanup.
+
+See `docs/phase5-progress.md` for measured workloads, fault tests, current capacity gaps and exact
+maintenance semantics. During a running offline evaluation, `result.json` is a lightweight checkpoint;
+use CLI/server queries for complete live results. The journal is authoritative, SQLite is rebuildable,
+and terminal checkpoints and portable exports still contain the complete Run.
 
 See docs/phase1-contract.md for the public contract and docs/verification.md for current acceptance evidence.

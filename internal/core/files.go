@@ -130,5 +130,8 @@ func atomicJSON(path string, v any) error {
 	if e = f.Close(); e != nil {
 		return e
 	}
-	return os.Rename(tmp, path)
+	if e = os.Rename(tmp, path); e != nil {
+		return e
+	}
+	return syncDirectory(filepath.Dir(path))
 }

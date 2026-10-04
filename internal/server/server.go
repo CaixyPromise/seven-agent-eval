@@ -137,6 +137,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		v, e := s.Engine.Store.Get(r.PathValue("id"))
 		if e != nil {
+			if errors.Is(e, core.ErrDataExpired) {
+				failureCode(w, "DATA_EXPIRED", http.StatusGone)
+				return
+			}
 			failure(w, errors.New("run not found"), 404)
 			return
 		}
@@ -159,6 +163,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/report", func(w http.ResponseWriter, r *http.Request) {
 		v, e := s.Engine.Store.Get(r.PathValue("id"))
 		if e != nil {
+			if errors.Is(e, core.ErrDataExpired) {
+				failureCode(w, "DATA_EXPIRED", http.StatusGone)
+				return
+			}
 			failure(w, errors.New("run not found"), 404)
 			return
 		}
@@ -228,6 +236,8 @@ func liveCode(err error) (string, int) {
 		return "LIVE_PLAN_INVALID", http.StatusBadRequest
 	}
 	switch err.Error() {
+	case core.ErrDataExpired.Error():
+		return "DATA_EXPIRED", http.StatusGone
 	case "plan is not a stream":
 		return "LIVE_PLAN_INVALID", http.StatusBadRequest
 	case "ingest batch too large":
@@ -511,6 +521,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	run, e := s.Engine.Store.Get(r.PathValue("id"))
 	if e != nil {
+		if errors.Is(e, core.ErrDataExpired) {
+			failureCode(w, "DATA_EXPIRED", http.StatusGone)
+			return
+		}
 		failure(w, errors.New("run not found"), 404)
 		return
 	}

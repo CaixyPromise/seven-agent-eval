@@ -25,6 +25,7 @@ import (
 )
 
 type liveRecord struct {
+	Expired        bool              `json:"expired,omitempty"`
 	ScoredSequence int               `json:"scored_sequence,omitempty"`
 	Sequence       int               `json:"sequence"`
 	WindowTime     time.Time         `json:"window_time"`
@@ -38,12 +39,15 @@ type liveRecord struct {
 	Case           *CaseResult       `json:"case,omitempty"`
 }
 type liveJournal struct {
-	Assembly *otlpAssembly `json:"assembly,omitempty"`
-	Sequence int           `json:"sequence"`
-	Type     string        `json:"type"`
-	Time     time.Time     `json:"time"`
-	PlanID   string        `json:"plan_id,omitempty"`
-	Record   *liveRecord   `json:"record,omitempty"`
+	ExpiredScope *ExpiredWindow  `json:"expired_scope,omitempty"`
+	WindowID     string          `json:"window_id,omitempty"`
+	Retention    *RetentionAudit `json:"retention,omitempty"`
+	Assembly     *otlpAssembly   `json:"assembly,omitempty"`
+	Sequence     int             `json:"sequence"`
+	Type         string          `json:"type"`
+	Time         time.Time       `json:"time"`
+	PlanID       string          `json:"plan_id,omitempty"`
+	Record       *liveRecord     `json:"record,omitempty"`
 }
 type LivePlanStatus struct {
 	ProjectionDegraded bool   `json:"projection_degraded"`
@@ -67,19 +71,25 @@ type LivePoint struct {
 	P95LatencyMS  *float64  `json:"p95_latency_ms,omitempty"`
 }
 type LiveReport struct {
-	Summary       *WindowScope   `json:"summary,omitempty"`
-	BacklogSeries []BacklogPoint `json:"backlog_series"`
-	Plan          LivePlanStatus `json:"plan"`
-	From          time.Time      `json:"from"`
-	To            time.Time      `json:"to"`
-	Current       *Run           `json:"current,omitempty"`
-	Windows       []Run          `json:"windows"`
-	Series        []LivePoint    `json:"series"`
+	ExpiredWindows int            `json:"expired_windows,omitempty"`
+	Summary        *WindowScope   `json:"summary,omitempty"`
+	BacklogSeries  []BacklogPoint `json:"backlog_series"`
+	Plan           LivePlanStatus `json:"plan"`
+	From           time.Time      `json:"from"`
+	To             time.Time      `json:"to"`
+	Current        *Run           `json:"current,omitempty"`
+	Windows        []Run          `json:"windows"`
+	Series         []LivePoint    `json:"series"`
 }
 type LiveManager struct {
+	compactPublish     func(string, string) error
+	expiredRanges      map[string]ExpiredWindow
+	expiredWindows     map[string]bool
+	retentionAudits    []RetentionAudit
 	assemblies         map[string]otlpAssembly
 	projectionDegraded bool
 	journalFailure     error
+	appendRecord       func(string, []byte) error
 	Engine             *Engine
 	root               string
 	db                 *sql.DB
@@ -107,7 +117,7 @@ func NewLiveManager(engine *Engine) (*LiveManager, error) {
 		db.Close()
 		return nil, err
 	}
-	m := &LiveManager{Engine: engine, root: root, db: db, records: map[string]*liveRecord{}, plans: map[string]Run{}, paused: map[string]bool{}, assemblies: map[string]otlpAssembly{}, wake: make(chan struct{}, 1)}
+	m := &LiveManager{Engine: engine, root: root, db: db, records: map[string]*liveRecord{}, plans: map[string]Run{}, paused: map[string]bool{}, assemblies: map[string]otlpAssembly{}, expiredWindows: map[string]bool{}, wake: make(chan struct{}, 1)}
 	if err = m.rebuild(); err != nil {
 		db.Close()
 		return nil, err
@@ -207,36 +217,16 @@ func (m *LiveManager) appendLocked(ev liveJournal) error {
 		return err
 	}
 	journalPath := filepath.Join(m.root, "events.jsonl")
-	_, statErr := os.Stat(journalPath)
-	f, err := os.OpenFile(journalPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
+	write := m.appendRecord
+	if write == nil {
+		write = appendJournal
 	}
-	_, err = f.Write(append(b, '\n'))
-	if err == nil {
-		err = f.Sync()
+	if len(b)+1 > 64<<20 {
+		return errors.New("live journal record too large")
 	}
-	closeErr := f.Close()
-	if err != nil {
+	if err = write(journalPath, append(b, '\n')); err != nil {
 		m.journalFailure = err
 		return err
-	}
-	if closeErr != nil {
-		m.journalFailure = closeErr
-		return closeErr
-	}
-	if os.IsNotExist(statErr) {
-		dir, openErr := os.Open(m.root)
-		if openErr != nil {
-			m.journalFailure = openErr
-			return openErr
-		}
-		err = dir.Sync()
-		dir.Close()
-		if err != nil {
-			m.journalFailure = err
-			return err
-		}
 	}
 	m.seq = ev.Sequence
 	// The journal is authoritative. This SQLite write is only a query projection.
@@ -248,6 +238,9 @@ func (m *LiveManager) appendLocked(ev liveJournal) error {
 	return nil
 }
 func (m *LiveManager) rebuild() error {
+	if m.expiredRanges == nil {
+		m.expiredRanges = map[string]ExpiredWindow{}
+	}
 	if _, err := m.db.Exec("DELETE FROM live_projection"); err != nil {
 		return err
 	}
@@ -263,11 +256,11 @@ func (m *LiveManager) rebuild() error {
 	reader := bufio.NewReader(f)
 	var offset int64
 	for {
-		line, readErr := reader.ReadBytes('\n')
+		line, readErr := readJournalLine(reader, 64<<20)
 		if readErr == io.EOF {
 			// An incomplete, unacknowledged tail is not a committed record.
 			if len(line) > 0 {
-				return os.Truncate(p, offset)
+				return truncateJournal(p, offset)
 			}
 			return nil
 		}
@@ -281,7 +274,7 @@ func (m *LiveManager) rebuild() error {
 		if err := decodeJSON(line, &ev); err != nil {
 			return errors.New("corrupt live journal")
 		}
-		if ev.Sequence != m.seq+1 {
+		if ev.Sequence != m.seq+1 && !(offset == 0 && ev.Type == "journal.compacted" && ev.Sequence > 0) {
 			return errors.New("live journal sequence gap")
 		}
 		m.seq = ev.Sequence
@@ -289,6 +282,20 @@ func (m *LiveManager) rebuild() error {
 			return err
 		}
 		switch ev.Type {
+		case "window.expired":
+			m.expiredWindows[ev.WindowID] = true
+			if ev.ExpiredScope != nil {
+				m.expiredRanges[ev.WindowID] = *ev.ExpiredScope
+			}
+		case "retention.applied":
+			if ev.Retention != nil {
+				m.retentionAudits = append(m.retentionAudits, *ev.Retention)
+			}
+		case "event.restored":
+			if ev.Record != nil {
+				copy := *ev.Record
+				m.records[liveKey(copy.PlanID, copy.Event.Source, copy.Event.EventID)] = &copy
+			}
 		case "otlp.updated":
 			if ev.Assembly != nil {
 				m.assemblies[ev.Assembly.Key] = *ev.Assembly
@@ -337,7 +344,7 @@ func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResu
 	defer m.mu.Unlock()
 	pending := 0
 	for _, r := range m.records {
-		if r.PlanID == batch.PlanID && r.Case == nil {
+		if r.PlanID == batch.PlanID && !r.Expired && r.Case == nil {
 			pending++
 		}
 	}
@@ -377,9 +384,13 @@ func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResu
 		}
 		unit, _ := unitKey(planRun.Effective.Plan, event)
 		conflict := false
+		expired := false
 		windowTime, earliest := event.EventTime, m.seq+1
 		for _, prior := range m.records {
 			priorUnit, _ := unitKey(planRun.Effective.Plan, prior.Event)
+			if prior.PlanID == batch.PlanID && priorUnit == unit && prior.Expired {
+				expired = true
+			}
 			if prior.PlanID == batch.PlanID && priorUnit == unit && prior.Sequence < earliest {
 				windowTime, earliest = prior.WindowTime, prior.Sequence
 			}
@@ -391,6 +402,11 @@ func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResu
 		if conflict {
 			out.Rejected++
 			out.Items = append(out.Items, IngestItem{EventID: event.EventID, Status: "rejected", Code: "EVIDENCE_REVISION_CONFLICT"})
+			continue
+		}
+		if expired || m.expiredEventLocked(batch.PlanID, windowTime) {
+			out.Rejected++
+			out.Items = append(out.Items, IngestItem{EventID: event.EventID, Status: "rejected", Code: "DATA_EXPIRED"})
 			continue
 		}
 		if pending >= planRun.Effective.Plan.Stream.MaxPending {
@@ -414,7 +430,7 @@ func (m *LiveManager) scorePending(ctx context.Context) {
 	m.mu.Lock()
 	work := []*liveRecord{}
 	for _, r := range m.records {
-		if r.Case == nil && !m.paused[r.PlanID] {
+		if !r.Expired && r.Case == nil && !m.paused[r.PlanID] {
 			copy := *r
 			work = append(work, &copy)
 		}
@@ -555,7 +571,7 @@ func (m *LiveManager) SetPaused(ctx context.Context, id string, paused bool) (Li
 func (m *LiveManager) statusLocked(id string, plan Run) LivePlanStatus {
 	pending := 0
 	for _, r := range m.records {
-		if r.PlanID == id && r.Case == nil {
+		if r.PlanID == id && !r.Expired && r.Case == nil {
 			pending++
 		}
 	}
@@ -580,7 +596,7 @@ func (m *LiveManager) Report(ctx context.Context, planID string, from, to time.T
 	m.mu.Lock()
 	records := []liveRecord{}
 	for _, r := range m.records {
-		if r.PlanID == planID {
+		if r.PlanID == planID && !r.Expired {
 			records = append(records, *r)
 		}
 	}
@@ -608,6 +624,13 @@ func (m *LiveManager) Report(ctx context.Context, planID string, from, to time.T
 	}
 	sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
 	out := LiveReport{Plan: status, From: from, To: to, Windows: []Run{}, Series: []LivePoint{}}
+	m.mu.Lock()
+	for _, scope := range m.expiredRanges {
+		if scope.PlanID == planID && scope.End.After(from) && scope.Start.Before(to) {
+			out.ExpiredWindows++
+		}
+	}
+	m.mu.Unlock()
 	for _, start := range starts {
 		window := m.window(ctx, plan, start, groups[start])
 		if ctx.Err() != nil {
@@ -723,6 +746,12 @@ func (m *LiveManager) window(ctx context.Context, base Run, start time.Time, rec
 	return r
 }
 func (m *LiveManager) Window(ctx context.Context, id string) (Run, error) {
+	m.mu.Lock()
+	expired := m.expiredWindows[id]
+	m.mu.Unlock()
+	if expired {
+		return Run{}, ErrDataExpired
+	}
 	if body, err := os.ReadFile(filepath.Join(m.root, "windows", Digest(id)+".json")); err == nil {
 		var snapshot Run
 		if decodeJSON(body, &snapshot) == nil && snapshot.ID == id {

@@ -16,11 +16,14 @@ import (
 )
 
 type Store struct {
-	Root     string
-	db       *sql.DB
-	lock     *os.File
-	mu       sync.Mutex
-	sequence map[string]int
+	Root           string
+	db             *sql.DB
+	lock           *os.File
+	mu             sync.Mutex
+	sequence       map[string]int
+	journalFailure error
+	appendRecord   func(string, []byte) error
+	caseBytes      map[string]int
 }
 
 // ProjectionError means the event is already durable. Never append stale query
@@ -50,8 +53,12 @@ func NewStore(root string) (*Store, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{Root: root, db: db, lock: f, sequence: map[string]int{}}
+	s := &Store{Root: root, db: db, lock: f, sequence: map[string]int{}, caseBytes: map[string]int{}}
 	if _, e = db.Exec("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, body BLOB NOT NULL)"); e != nil {
+		s.Close()
+		return nil, e
+	}
+	if _, e = db.Exec("CREATE TABLE IF NOT EXISTS run_cases (run_id TEXT NOT NULL, ordinal INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(run_id,ordinal))"); e != nil {
 		s.Close()
 		return nil, e
 	}
@@ -73,6 +80,12 @@ func (s *Store) Commit(r *Run, eventType string, data any) error {
 	return s.commit(r, eventType, data)
 }
 func (s *Store) commit(r *Run, eventType string, data any) error {
+	if s.expiredRun(r.ID) {
+		return ErrDataExpired
+	}
+	if s.journalFailure != nil {
+		return errors.New("journal unavailable; reopen the store to recover")
+	}
 	if !validID.MatchString(r.ID) {
 		return errors.New("invalid run id")
 	}
@@ -81,19 +94,38 @@ func (s *Store) commit(r *Run, eventType string, data any) error {
 		return e
 	}
 	ev := Event{Sequence: s.sequence[r.ID] + 1, Type: eventType, Time: time.Now().UTC(), Data: data}
-	body, e := json.Marshal(r)
+	projection := *r
+	var delta *CaseResult
+	if eventType == "case.completed" {
+		c, ok := data.(CaseResult)
+		if !ok || len(r.Cases) == 0 || r.Completed != len(r.Cases) {
+			return errors.New("invalid case projection")
+		}
+		delta = &c
+		projection.Cases = nil
+	}
+	body, e := json.Marshal(&projection)
 	if e != nil {
 		return e
 	}
 	if len(body) > 64<<20 {
 		return errors.New("run exceeds 64 MiB")
 	}
-	pretty, e := json.MarshalIndent(r, "", "  ")
+	pretty, e := json.MarshalIndent(&projection, "", "  ")
 	if e != nil {
 		return e
 	}
 	if len(pretty) > 64<<20 {
 		return errors.New("result exceeds 64 MiB")
+	}
+	if delta != nil {
+		b, err := json.MarshalIndent(delta, "    ", "  ")
+		if err != nil {
+			return err
+		}
+		if s.caseBytes[r.ID]+len(b)+len(pretty)+16 > 64<<20 {
+			return errors.New("result exceeds 64 MiB")
+		}
 	}
 	if eventType != "case.completed" {
 		ev.Run = body
@@ -105,27 +137,22 @@ func (s *Store) commit(r *Run, eventType string, data any) error {
 	if len(line)+1 > 64<<20 {
 		return errors.New("journal record exceeds 64 MiB")
 	}
-	f, e := os.OpenFile(filepath.Join(dir, "events.jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	if e != nil {
+	write := s.appendRecord
+	if write == nil {
+		write = appendJournal
+	}
+	if e = write(filepath.Join(dir, "events.jsonl"), append(line, '\n')); e != nil {
+		s.journalFailure = e
 		return e
-	}
-	_, e = f.Write(append(line, '\n'))
-	if e == nil {
-		e = f.Sync()
-	}
-	ce := f.Close()
-	if e != nil {
-		return e
-	}
-	if ce != nil {
-		return ce
 	}
 	s.sequence[r.ID] = ev.Sequence
 	// The journal is durable first; both following stores can be reconstructed.
-	if e = atomicJSON(filepath.Join(dir, "result.json"), r); e != nil {
+	// During execution this file is a lightweight checkpoint. Get assembles
+	// complete cases from the SQLite projection; terminal checkpoints are full.
+	if e = atomicJSON(filepath.Join(dir, "result.json"), &projection); e != nil {
 		return &ProjectionError{Err: e}
 	}
-	_, e = s.db.Exec("INSERT INTO runs(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body", r.ID, body)
+	e = s.project(r, delta)
 	if e != nil {
 		return &ProjectionError{Err: e}
 	}
@@ -135,13 +162,91 @@ func (s *Store) Get(id string) (Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var r Run
+	if s.expiredRun(id) {
+		return r, ErrDataExpired
+	}
 	var b []byte
 	if e := s.db.QueryRow("SELECT body FROM runs WHERE id=?", id).Scan(&b); e != nil {
 		return r, e
 	}
 	e := decodeJSON(b, &r)
-	return r, e
+	if e != nil {
+		return r, e
+	}
+	rows, e := s.db.Query("SELECT body FROM run_cases WHERE run_id=? ORDER BY ordinal", id)
+	if e != nil {
+		return r, e
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var b []byte
+		var c CaseResult
+		if e = rows.Scan(&b); e != nil {
+			return r, e
+		}
+		if e = decodeJSON(b, &c); e != nil {
+			return r, e
+		}
+		r.Cases = append(r.Cases, c)
+	}
+	return r, rows.Err()
 }
+
+// Separate case rows prevent rewriting all prior evidence on every completion.
+// The projection is transactional and entirely rebuildable from the journal.
+func (s *Store) project(r *Run, delta *CaseResult) error {
+	meta := *r
+	meta.Cases = nil
+	if r.Cases != nil {
+		meta.Cases = []CaseResult{}
+	}
+	body, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT INTO runs(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body", r.ID, body); err != nil {
+		return err
+	}
+	bytes := s.caseBytes[r.ID]
+	items := r.Cases
+	start := 0
+	if delta != nil {
+		items = []CaseResult{*delta}
+		start = len(r.Cases) - 1
+	} else {
+		if _, err = tx.Exec("DELETE FROM run_cases WHERE run_id=?", r.ID); err != nil {
+			return err
+		}
+		bytes = 0
+	}
+	for i, c := range items {
+		b, e := json.Marshal(c)
+		if e != nil {
+			return e
+		}
+		if _, err = tx.Exec("INSERT INTO run_cases(run_id,ordinal,body) VALUES(?,?,?)", r.ID, start+i, b); err != nil {
+			return err
+		}
+		pretty, e := json.MarshalIndent(c, "    ", "  ")
+		if e != nil {
+			return e
+		}
+		bytes += len(pretty) + 16
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	s.caseBytes[r.ID] = bytes
+	return nil
+}
+
+// List returns run metadata without loading every historical CaseResult.
+// Get provides the full run when the user selects a specific result.
 func (s *Store) List() ([]Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -160,6 +265,9 @@ func (s *Store) List() ([]Run, error) {
 		if e = decodeJSON(b, &r); e != nil {
 			return nil, e
 		}
+		if s.expiredRun(r.ID) {
+			continue
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -173,8 +281,14 @@ func (s *Store) rebuild() error {
 	if _, e = s.db.Exec("DELETE FROM runs"); e != nil {
 		return e
 	}
+	if _, e = s.db.Exec("DELETE FROM run_cases"); e != nil {
+		return e
+	}
 	for _, dir := range dirs {
 		if !dir.IsDir() || !validID.MatchString(dir.Name()) {
+			continue
+		}
+		if s.expiredRun(dir.Name()) {
 			continue
 		}
 		p := filepath.Join(s.Root, "runs", dir.Name(), "events.jsonl")
@@ -190,7 +304,7 @@ func (s *Store) rebuild() error {
 		var offset int64
 		seq := 0
 		for {
-			line, err := reader.ReadBytes('\n')
+			line, err := readJournalLine(reader, 64<<20)
 			if err == io.EOF {
 				break
 			}
@@ -230,8 +344,14 @@ func (s *Store) rebuild() error {
 			offset += int64(len(line))
 		}
 		f.Close()
-		if e = os.Truncate(p, offset); e != nil {
-			return e
+		stat, err := os.Stat(p)
+		if err != nil {
+			return err
+		}
+		if stat.Size() != offset {
+			if e = truncateJournal(p, offset); e != nil {
+				return e
+			}
 		}
 		if r.ID == "" {
 			continue
@@ -244,8 +364,7 @@ func (s *Store) rebuild() error {
 				return e
 			}
 		} else {
-			body, _ := json.Marshal(r)
-			if _, e = s.db.Exec("INSERT INTO runs(id,body) VALUES(?,?)", r.ID, body); e != nil {
+			if e = s.project(&r, nil); e != nil {
 				return e
 			}
 			if e = atomicJSON(filepath.Join(s.Root, "runs", r.ID, "result.json"), &r); e != nil {

@@ -143,6 +143,7 @@ export type LivePoint = {
 };
 
 export type LiveReport = {
+  expired_windows?: number;
   summary?: WindowScope;
   backlog_series?: { time: string; pending: number }[];
   plan: LivePlan;

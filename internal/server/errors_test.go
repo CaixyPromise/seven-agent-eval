@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"seven-agent-eval/internal/core"
 	"strings"
 	"testing"
 )
@@ -44,5 +45,12 @@ func TestSafeProductErrorDoesNotLeakRawDetails(t *testing.T) {
 	}
 	if !strings.Contains(body, "UNEXPECTED") {
 		t.Fatal("missing safe code")
+	}
+}
+
+func TestExpiredWindowHasStableGoneCode(t *testing.T) {
+	code, status := liveCode(core.ErrDataExpired)
+	if code != "DATA_EXPIRED" || status != http.StatusGone {
+		t.Fatalf("%s %d", code, status)
 	}
 }

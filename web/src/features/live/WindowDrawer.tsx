@@ -44,7 +44,7 @@ export function WindowDrawer({
       title={scope ? `窗口详情 · ${formatDate(scope.start)}` : "窗口详情"}
       extra={
         window ? (
-          <Button type="primary" loading={exporting} onClick={onExport}>
+          <Button type="primary" loading={exporting} disabled={error === "DATA_EXPIRED"} onClick={onExport}>
             导出窗口
           </Button>
         ) : null
@@ -55,12 +55,12 @@ export function WindowDrawer({
       {window && scope ? (
         <div className="drawer-body live-drawer">
           {latest && latest.id !== window.id ? <Alert type="info" title={`已有更新：修订 ${latest.scope.revision}`} action={<Button onClick={() => onRefresh(latest.id)}>查看最新</Button>} /> : null}
-          <Alert
+          {error !== "DATA_EXPIRED" ? <Alert
             type={scope.state === "final" ? "success" : "info"}
             showIcon
             title={scope.state === "final" ? "窗口已结束，迟到证据仍可修订" : "窗口统计中"}
             description={`水位线：${formatDate(scope.watermark)} · 修订 ${scope.revision}`}
-          />
+          /> : null}
           <Descriptions column={2} size="small" title="计数漏斗">
             <Descriptions.Item label="接收">{scope.received}</Descriptions.Item>
             <Descriptions.Item label="合格">{scope.eligible}</Descriptions.Item>

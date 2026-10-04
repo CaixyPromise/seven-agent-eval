@@ -25,7 +25,7 @@ func (m *LiveManager) rangeSummary(ctx context.Context, base Run, report *LiveRe
 	r.Completed = len(r.Cases)
 	m.mu.Lock()
 	for _, record := range m.records {
-		if record.PlanID == report.Plan.ID && !record.WindowTime.Before(report.From) && record.WindowTime.Before(report.To) {
+		if !record.Expired && record.PlanID == report.Plan.ID && !record.WindowTime.Before(report.From) && record.WindowTime.Before(report.To) {
 			r.Scope.BacklogFacts = append(r.Scope.BacklogFacts, WindowFact{ReceivedAt: record.ReceivedAt, ScoredAt: record.ScoredAt})
 		}
 	}

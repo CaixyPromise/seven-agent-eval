@@ -31,6 +31,7 @@ export const errorCopy = {
   OTLP_ENCODING_UNSUPPORTED: "当前仅支持 JSON 编码的 OTLP 追踪数据。",
   OTLP_MAPPING_INVALID: "追踪数据缺少持续评分所需字段，尚未接收。",
   WINDOW_NOT_FOUND: "找不到这个时间窗口。请返回窗口列表重新选择。",
+  DATA_EXPIRED: "这份数据已按保留策略清理。已导出的结果包仍可独立打开。",
   WINDOW_EXPORT_UNAVAILABLE: "这个窗口暂时无法导出。请刷新后重试。",
   LIVE_UNAVAILABLE: "持续评分服务暂不可用。请确认本地服务后重试。",
 } as const;

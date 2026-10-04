@@ -1,4 +1,4 @@
-.PHONY: setup build test demo acceptance-live acceptance-rag acceptance-seven acceptance-compare acceptance-typescript browser-fixture
+.PHONY: setup build test demo acceptance-live acceptance-rag acceptance-seven acceptance-compare acceptance-typescript acceptance-resilience browser-fixture
 setup:
 	uv sync --locked --project sdk/python --python 3.11
 	pnpm --dir web install --frozen-lockfile
@@ -29,3 +29,6 @@ acceptance-compare: build
 	uv run --project sdk/python python scripts/comparison_acceptance.py
 acceptance-typescript: build
 	uv run --project sdk/python python scripts/typescript_acceptance.py
+
+acceptance-resilience: build
+	uv run --project sdk/python python scripts/resilience_acceptance.py

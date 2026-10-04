@@ -58,7 +58,7 @@ func run() error {
 	}
 	args := fs.Args()
 	if len(args) == 0 {
-		return errors.New("usage: seven-eval [--package DIR] [--json] init|discover|plan inspect|run|serve|export|verify")
+		return errors.New("usage: seven-eval [--package DIR] [--json] init|discover|plan inspect|run|serve|export|verify|retention")
 	}
 	// --json is also accepted after read-only subcommands.
 	cleaned := []string{}
@@ -142,6 +142,40 @@ func run() error {
 	defer store.Close()
 	engine := &core.Engine{Root: root, Worker: worker, Store: store}
 	switch cmd {
+	case "retention":
+		if len(args) != 3 {
+			return errors.New("usage: retention preview RFC3339-CUTOFF | retention apply PREVIEW-DIGEST")
+		}
+		live, e := core.NewLiveManager(engine)
+		if e != nil {
+			return e
+		}
+		defer live.Close()
+		switch args[1] {
+		case "preview":
+			before, e := time.Parse(time.RFC3339, args[2])
+			if e != nil {
+				return errors.New("cutoff must be RFC3339 with timezone")
+			}
+			preview, e := live.PreviewRetention(before)
+			if e != nil {
+				return e
+			}
+			if e = live.SaveRetentionPreview(preview); e != nil {
+				return e
+			}
+			printJSON(preview)
+			return nil
+		case "apply":
+			audit, e := live.ApplyRetention(ctx, args[2])
+			if e != nil {
+				return e
+			}
+			printJSON(audit)
+			return nil
+		default:
+			return errors.New("unknown retention operation")
+		}
 	case "run":
 		if len(args) != 2 {
 			return errors.New("usage: run PLAN")
