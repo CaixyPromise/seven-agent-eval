@@ -32,3 +32,7 @@ acceptance-typescript: build
 
 acceptance-resilience: build
 	uv run --project sdk/python python scripts/resilience_acceptance.py
+
+.PHONY: acceptance-large
+acceptance-large: build
+	uv run --project sdk/python python scripts/large_acceptance.py

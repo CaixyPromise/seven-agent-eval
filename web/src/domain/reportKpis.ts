@@ -57,16 +57,5 @@ export function reportKpis(outputs: Run["outputs"]): ReportKPIs {
       return { invalid: true };
     }
   }
-  const legacy = outputs.find(
-    (o) => o.processor === "builtin.basic-summary@1",
-  )?.data;
-  return legacy
-    ? {
-        scored: legacy.scored as number,
-        coverage: legacy.coverage as number,
-        anomalies: Array.isArray(legacy.failure_ids)
-          ? legacy.failure_ids.length
-          : undefined,
-      }
-    : {};
+  return {};
 }

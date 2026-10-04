@@ -1,9 +1,9 @@
 import type { ProcessorContext } from "@seven-agent/eval";
 export function summarize(ctx: ProcessorContext) {
-  const scored_count = ctx.cases.filter((c) =>
+  const scored_count = (ctx.cases??[]).filter((c) =>
     c.metrics.some((m) => m.status === "observed"),
   ).length;
-  const anomaly_count = ctx.cases.filter(
+  const anomaly_count = (ctx.cases??[]).filter(
     (c) =>
       c.status !== "completed" ||
       c.metrics.some(

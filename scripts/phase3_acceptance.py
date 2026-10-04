@@ -1,4 +1,5 @@
 """Portable RAG acceptance against a real loopback HTTP server; no credentials."""
+from bundle_fixture import read_fixture, assert_viewer_run
 import json
 import os
 import pathlib
@@ -30,7 +31,7 @@ def main():
             result=cli("run","rag")
             bundle=pathlib.Path(result["bundle"])
             with zipfile.ZipFile(bundle) as archive:
-                run=json.loads(archive.read("run.json"));html=archive.read("report.html")
+                run=read_fixture(archive);html=archive.read("report.html")
             assert run["completed"]==5 and run["status"]=="completed"
             assert run["dataset_revision"]["source_id"]=="questions"
             missing=next(c for c in run["cases"] if c["case"]["id"]=="missing-qrels")

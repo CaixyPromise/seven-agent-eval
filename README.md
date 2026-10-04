@@ -96,12 +96,16 @@ No paid judge is called automatically.
 ```python
 from seven_evaluate import processor
 
-@processor(id="team-summary", version="1.0.0")
+@processor(id="team-summary", version="2.0.0")
 def summarize(context):
+    if context["phase"] == "initialize":
+        return {"sample_count": 0}
+    if context["phase"] == "update":
+        return {"sample_count": context["state"]["sample_count"] + len(context["cases"])}
     return {
-        "processor": "team-summary@1.0.0",
+        "processor": "team-summary@2.0.0",
         "input_digest": context["input_digest"],
-        "data": {"sample_count": len(context["cases"])},
+        "data": context["state"],
     }
 ```
 
@@ -110,7 +114,8 @@ Replacing statistics may make the default conclusion's dependency unavailable; t
 instead of reusing stale statistics. Custom data renders as a structured table/JSON view.
 
 Subject decorators receive `{"inputs": ...}`; evaluators receive case, result, subject status/reason;
-processors receive cases, total and input_digest; conclusions receive outputs and cases.
+processors receive initialize/update/finalize phases, bounded case batches and serialized state;
+conclusions receive outputs, total and completed (not all cases).
 Async callables are supported. One public decorated asset per file. Helpers such as _helper.py are
 not registered but are included in the execution snapshot. Extensions are trusted local Python code.
 A run snapshots Package and SDK source and records their digests. Dependencies use the prepared Python
@@ -123,8 +128,10 @@ environment; use SEVEN_EVAL_PYTHON to select an explicitly prepared interpreter.
 ./bin/seven-eval --package /tmp --state /tmp/seven-viewer serve artifacts/phase1/demo.seven.eval
 ```
 
-A result file is a finite ZIP snapshot containing manifest, shared schema, effective plan,
-catalogs, evidence/results and self-contained HTML. The server renders verified data, not imported scripts.
+A version-2 result file is a finite ZIP snapshot containing manifest, shared schema, effective plan,
+catalogs, partitioned input/result JSONL and a self-contained summary HTML. The viewer pages through
+sample summaries and loads evidence on demand. Version-1 packages and old state are rejected;
+regenerate them rather than migrate. The server renders verified data, not imported scripts.
 Viewing a saved result does not launch Python or call the original target. Export refuses to overwrite
 an existing file. Use a new destination filename.
 
@@ -133,8 +140,13 @@ Source snapshots remain private runtime files and are not included as executable
 
 ## Limits and operation semantics
 
-- Offline execution is sequential, at most 1000 cases / 32 MiB input, 1 MiB per JSONL record.
-- HTTP output is capped at 2 MiB, worker output at 8 MiB, export at 64 MiB uncompressed.
+- Offline execution is sequential: at most 10,000 expanded cases, 1 GiB per source file,
+  2 MiB per normalized input record. All inputs are validated before any Subject call.
+- HTTP output is capped at 2 MiB, worker output at 8 MiB, result records at 4 MiB and
+  metadata at 8 MiB. ZIP parts are at most 16 MiB, with at most 4,096 entries and 4 GiB
+  total uncompressed content. These are separate safety limits, not a throughput SLA.
+- Builtin exact aggregation uses SQLite; Python/TS custom processors use the same reducer
+  contract. See [bounded execution contract](docs/bounded-evaluation.md).
 - Per-operation timeout defaults to 120 seconds, configurable up to 300. No Subject retries.
 - Cancelling stops further calls and preserves a partial report; graceful finishing after cancellation
   has a separate 30-second cap. Restart marks an unfinished run partial and never replays side effects.

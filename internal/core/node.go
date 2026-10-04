@@ -170,7 +170,7 @@ func (e *Engine) freezeNode(ctx context.Context, r *Run) error {
 		id = NewID()
 		frozen := *r
 		frozen.ID = id
-		if err := e.snapshot(&frozen); err != nil {
+		if err := e.snapshot(&frozen, nil); err != nil {
 			return err
 		}
 		r.Effective.Files = frozen.Effective.Files

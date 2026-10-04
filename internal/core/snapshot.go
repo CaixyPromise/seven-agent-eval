@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func (e *Engine) snapshot(r *Run) error {
+func (e *Engine) snapshot(r *Run, excluded map[string]bool) error {
 	r.Effective.Files = map[string]string{}
 	total, count := 0, 0
 	copyTree := func(root, dest, prefix string) error {
@@ -37,6 +37,9 @@ func (e *Engine) snapshot(r *Run) error {
 			rel, err := filepath.Rel(root, p)
 			if err != nil {
 				return err
+			}
+			if prefix == "package/" && excluded[filepath.Clean(rel)] {
+				return nil
 			}
 			target := filepath.Join(dest, rel)
 			if d.IsDir() {

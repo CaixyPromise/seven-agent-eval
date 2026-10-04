@@ -1,4 +1,5 @@
 import type {
+  CaseResult,
   Discovery,
   LivePlan,
   LiveReport,
@@ -25,6 +26,8 @@ async function request<T>(
   return data as T;
 }
 const runPath = (id: string) => "/runs/" + encodeURIComponent(id);
+export interface CaseSummary {id:string; ordinal:number; status:string; reason?:string; response_preview:string; observed:number; anomaly:boolean; episode?:string; candidate?:string; original_id?:string}
+export interface CasePage {items:CaseSummary[];total:number;offset:number;limit:number}
 export const evaluationApi = {
   discovery: (signal?: AbortSignal) =>
     request<Discovery>("/assets", "LOAD_ASSETS", { signal }),
@@ -32,6 +35,10 @@ export const evaluationApi = {
     request<RunSummary[]>("/runs", "LOAD_RUNS", { signal }),
   run: (id: string, signal?: AbortSignal) =>
     request<Run>(runPath(id), "LOAD_RUN", { signal }),
+  cases: (id: string, query: URLSearchParams, signal?: AbortSignal) =>
+    request<CasePage>(runPath(id)+"/cases?"+query, "LOAD_CASES", {signal}),
+  case: (id: string, caseID: string, signal?: AbortSignal) =>
+    request<CaseResult>(runPath(id)+"/cases/detail?case_id="+encodeURIComponent(caseID), "LOAD_CASE", {signal}),
   start: (plan: string) =>
     request<Run>("/runs", "START_UNKNOWN", {
       method: "POST",
@@ -45,24 +52,8 @@ export const evaluationApi = {
   import: (file: File) =>
     request<Run>("/import", "IMPORT_UNKNOWN", { method: "POST", body: file }),
   async export(id: string) {
-    let response: Response;
-    try {
-      response = await fetch("/api" + runPath(id) + "/export");
-    } catch {
-      throw new ProductError("EXPORT_UNKNOWN");
-    }
-    if (!response.ok)
-      throw responseError(
-        await response.json().catch(() => null),
-        "EXPORT_UNKNOWN",
-      );
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = id + ".seven.eval";
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const ticket=await request<{url:string}>(runPath(id)+"/export","EXPORT_UNKNOWN",{method:"POST"});
+    download(ticket.url,id);
   },
   livePlans: (signal?: AbortSignal) =>
     request<LivePlan[]>("/live/plans", "LOAD_LIVE_PLANS", { signal }),
@@ -91,23 +82,12 @@ export const evaluationApi = {
       { signal },
     ),
   async exportWindow(id: string) {
-    let response: Response;
-    try {
-      response = await fetch("/api/live/windows/" + encodeURIComponent(id) + "/export");
-    } catch {
-      throw new ProductError("WINDOW_EXPORT_UNAVAILABLE");
-    }
-    if (!response.ok)
-      throw responseError(
-        await response.json().catch(() => null),
-        "WINDOW_EXPORT_UNAVAILABLE",
-      );
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = id + ".seven.eval";
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const ticket=await request<{url:string}>("/live/windows/"+encodeURIComponent(id)+"/export","WINDOW_EXPORT_UNAVAILABLE",{method:"POST"});
+    download(ticket.url,id);
   },
 };
+function download(url:string,id:string) {
+  if(!/^\/api\/downloads\/[A-Z2-7]+$/.test(url)) throw new ProductError("EXPORT_UNKNOWN");
+  const link=document.createElement("a");
+  link.href=url; link.download=id+".seven.eval"; link.click();
+}

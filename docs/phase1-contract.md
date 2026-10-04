@@ -1,5 +1,9 @@
 # Phase 1 contract
 
+Historical phase-1 record. The current breaking execution/Processor/bundle contract
+is [bounded evaluation 2.0](bounded-evaluation.md); the original limits below are
+not the current runtime limits. There is no old-package migration layer.
+
 The project is an independent repository. CLI: seven-eval; Python: seven_evaluate.
 Only independent cases execute. Conversation inputs remain opaque; shared session/environment lifecycle and production ingestion are later tasks.
 

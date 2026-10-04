@@ -94,7 +94,7 @@ func TestBrowserAPIExecuteSSEAndReport(t *testing.T) {
 	}
 	html, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if !bytes.Contains(html, []byte("Catalogs")) || !bytes.Contains(html, []byte("Hello")) {
+	if !bytes.Contains(html, []byte("Catalogs")) || bytes.Contains(html, []byte("Hello")) {
 		t.Fatal("default report missing")
 	}
 	response, e = http.Get(s.URL + "/api/runs/" + run.ID + "/export")

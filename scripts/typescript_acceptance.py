@@ -1,4 +1,5 @@
 """Real TS/Python execution and portable viewer; no external services."""
+from bundle_fixture import read_fixture, assert_viewer_run
 import json
 import os
 import pathlib
@@ -32,10 +33,11 @@ def reopen(bundle, expected, directory):
                 assert time.monotonic()<deadline, "viewer startup timeout"
                 time.sleep(.05)
         with urllib.request.urlopen(address+"/api/runs/"+expected["id"], timeout=5) as response:
-            assert json.load(response)==expected
+            assert json.load(response)=={key:value for key,value in expected.items() if key!="cases"}
+        assert_viewer_run(address,expected)
         with urllib.request.urlopen(address+"/api/runs/"+expected["id"]+"/report", timeout=5) as response:
             html=response.read().decode()
-            assert "team-summary@1.0.0" in html and "TEAM_REVIEW" in html
+            assert "team-summary@2.0.0" in html and "TEAM_REVIEW" in html
         return html
     finally:
         if viewer.poll() is None: viewer.terminate()
@@ -58,14 +60,14 @@ def main():
             assert result.returncode==0,(plan,result.stdout,result.stderr)
             reply=json.loads(result.stdout)
             with zipfile.ZipFile(reply["bundle"]) as archive:
-                run=json.loads(archive.read("run.json"))
+                run=read_fixture(archive)
             runs[plan]=run
             shutil.copy2(reply["bundle"],artifacts/(plan+".seven.eval"))
         ts=runs["typescript"];py=runs["python"]
         assert ts["outputs"][0]["data"]==py["outputs"][0]["data"]
         assert ts["outputs"][0]["report"]==py["outputs"][0]["report"]
         assert ts["conclusions"]==py["conclusions"]
-        assert ts["outputs"][0]["processor"]=="team-summary@1.0.0"
+        assert ts["outputs"][0]["processor"]=="team-summary@2.0.0"
         assert not runs["missing"]["outputs"] and len(runs["conflict"]["outputs"])==2
         assert ts["effective"]["node_runtime"]["version"]
         for a,b in zip(ts["cases"],py["cases"]):

@@ -20,7 +20,7 @@ func TestStoreFailedAppendRequiresReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	r := Run{ID: "failure", Status: "running"}
+	r := Run{SchemaVersion: Version, ID: "failure", Status: "running"}
 	p := filepath.Join(root, "runs", r.ID, "events.jsonl")
 	if err = os.MkdirAll(p, 0700); err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestOfflineDiskFailurePreservesPriorCases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := Run{ID: "disk", Status: "running"}
+	r := Run{SchemaVersion: Version, ID: "disk", Status: "running"}
 	if err = s.Commit(&r, "run.started", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestOfflineDiskFailurePreservesPriorCases(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	got, err := s.Get(r.ID)
+	got, err := getFixture(t, s, r.ID)
 	if err != nil || got.Status != "partial" || len(got.Cases) != 1 {
 		t.Fatalf("lost confirmed data: %+v %v", got, err)
 	}
@@ -131,7 +131,7 @@ func TestStoreRebuildDoesNotRefreshRetentionAge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := Run{ID: "age", Status: "completed"}
+	r := Run{SchemaVersion: Version, ID: "age", Status: "completed"}
 	if err = s.Commit(&r, "run.finished", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestOfflineSQLProjectionRebuildsIncrementalCase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := Run{ID: "sql", Status: "running"}
+	r := Run{SchemaVersion: Version, ID: "sql", Status: "running"}
 	if err = s.Commit(&r, "run.started", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestOfflineSQLProjectionRebuildsIncrementalCase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	got, err := s.Get(r.ID)
+	got, err := getFixture(t, s, r.ID)
 	if err != nil || len(got.Cases) != 1 || got.Cases[0].Case.ID != "durable" || got.Status != "partial" {
 		t.Fatal(got, err)
 	}

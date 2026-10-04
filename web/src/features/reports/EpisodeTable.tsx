@@ -1,15 +1,13 @@
 import Button from "antd/es/button";
 import Table from "antd/es/table";
 import Tag from "antd/es/tag";
-import type { CaseResult, EpisodeResult } from "../../domain/types";
+import type { EpisodeResult } from "../../domain/types";
 import { StatusBadge } from "../../components/StatusBadge";
 
-export function EpisodeTable({ episodes, samples, onOpen }: {
+export function EpisodeTable({ episodes, onOpen }: {
   episodes: EpisodeResult[];
-  samples: CaseResult[];
-  onOpen: (sample: CaseResult) => void;
+  onOpen: (id: string) => void;
 }) {
-  const byID = new Map(samples.map(sample => [sample.case.id, sample]));
   return <Table<EpisodeResult> rowKey="id" size="small" pagination={false}
     dataSource={episodes} scroll={{ x: 680 }} columns={[
       { title: "Episode", dataIndex: "id", width: 200,
@@ -18,11 +16,10 @@ export function EpisodeTable({ episodes, samples, onOpen }: {
         render: status => <StatusBadge status={status} /> },
       { title: "已处理 / 计划轮次", width: 150,
         render: (_value, episode) => `${episode.completed} / ${episode.case_ids.length}` },
-      { title: "按顺序查看轮次", render: (_value, episode) => episode.case_ids.map(id => {
-        const sample = byID.get(id);
-        return sample ? <Button key={id} type="link" onClick={() => onOpen(sample)}
+      { title: "按顺序查看轮次", render: (_value, episode) => episode.case_ids.map((id,index) => {
+        return index < episode.completed ? <Button key={id} type="link" onClick={() => onOpen(id)}
           style={{ height: "auto", whiteSpace: "normal", overflowWrap: "anywhere" }}>
-          {sample.case.metadata?.turn_id ?? id}
+          {id}
         </Button> : <Tag key={id} style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>{id} · 未执行</Tag>;
       }) },
     ]} />;

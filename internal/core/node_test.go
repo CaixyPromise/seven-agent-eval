@@ -26,7 +26,7 @@ func TestNodeWorkerKindsAndLossless(t *testing.T) {
 			if descriptor["kind"] != kind {
 				t.Fatal(descriptor)
 			}
-			method := map[string]string{"subject": "invoke", "evaluator": "evaluate", "processor": "process", "conclusion": "conclude"}[kind]
+			method := map[string]string{"subject": "invoke", "evaluator": "evaluate", "processor": "reduce", "conclusion": "conclude"}[kind]
 			input := map[string]any{"values": []any{nil, false, 0, json.Number("9007199254740993")}}
 			var got map[string]any
 			if err := e.Worker.Call(context.Background(), kind+"/"+method, map[string]any{"path": file, "context": input}, &got); err != nil {
@@ -49,7 +49,7 @@ func TestNodeSnapshotAndKPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	put(t, root, "processors/_helper.ts", `export const count=99;`)
-	r, err = e.Execute(context.Background(), r)
+	r, err = executeFixture(t, e, context.Background(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestNodeFailureAndCancellation(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			var result any
-			err := e.Worker.Call(ctx, "processor/process", map[string]any{"path": filepath.Join(root, "processors/fail.ts")}, &result)
+			err := e.Worker.Call(ctx, "processor/reduce", map[string]any{"path": filepath.Join(root, "processors/fail.ts")}, &result)
 			if err == nil || strings.Contains(err.Error(), "SECRET") {
 				t.Fatalf("unsafe failure: %v", err)
 			}
@@ -174,7 +174,7 @@ export default subject({id:"session"},ctx=>{if("references" in ctx)throw Error("
 func TestNodeStreamExtensions(t *testing.T) {
 	e, _, root := fixture(t)
 	put(t, root, "evaluators/present.js", `import {evaluator} from "@seven-agent/eval"; export default evaluator({id:"present",metrics:["output.present"]},ctx=>[{id:"present",metric_id:"output.present",case_id:ctx.case.id,status:"observed",value:ctx.result.response!==null,evaluator:"present@1"}]);`)
-	put(t, root, "processors/window.ts", `import {processor} from "@seven-agent/eval";export default processor({id:"window"},ctx=>({processor:"window@1",input_digest:ctx.input_digest,data:{count:ctx.cases.length,window:{scored:ctx.cases.length,received:ctx.total,series:{time:ctx.window.start,scored:ctx.cases.length}}}}));`)
+	put(t, root, "processors/window.ts", `import {processor} from "@seven-agent/eval";export default processor({id:"window"},ctx=>ctx.phase==="initialize"?{count:0}:ctx.phase==="update"?{count:ctx.state.count+ctx.cases.length}:({processor:"window@1",input_digest:ctx.input_digest,data:{count:ctx.state.count,window:{scored:ctx.state.count,received:ctx.total,series:{time:ctx.window.start,scored:ctx.state.count}}}}));`)
 	put(t, root, "plans/production.yaml", "schema_version: evaluate.plan/v1\nid: production\nmode: stream\nevaluators: [evaluator:present]\nprocessors: [processor:window]\nconclusions: []\nstream:\n  unit: trace\n")
 	m, err := NewLiveManager(e)
 	if err != nil {
@@ -215,7 +215,7 @@ func TestCrossLanguageFixture(t *testing.T) {
 	put(t, root, "processors/echo.py", "from seven_evaluate import processor\n@processor(id='echo')\ndef echo(ctx): return ctx\n")
 	for _, ext := range []string{"ts", "py"} {
 		var got any
-		if err = e.Worker.Call(context.Background(), "processor/process", map[string]any{"path": filepath.Join(root, "processors/echo."+ext), "context": ctx}, &got); err != nil {
+		if err = e.Worker.Call(context.Background(), "processor/reduce", map[string]any{"path": filepath.Join(root, "processors/echo."+ext), "context": ctx}, &got); err != nil {
 			t.Fatal(err)
 		}
 		if Digest(ctx) != Digest(got) {
@@ -236,7 +236,7 @@ func TestNodeCancellationPreservesCompletedCases(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	r, _ = e.Execute(ctx, r)
+	r, _ = executeFixture(t, e, ctx, r)
 	if r.Status != "cancelled" || len(r.Cases) < 1 || r.Cases[0].Status != "completed" {
 		t.Fatalf("completed case lost %+v", r)
 	}

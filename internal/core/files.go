@@ -46,6 +46,31 @@ func Digest(v any) string {
 	return Hash(b)
 }
 func Hash(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
+
+// HashFile checks a regular file without allocating its contents.
+func HashFile(path string, limit int64) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !stat.Mode().IsRegular() || stat.Size() > limit {
+		return "", errors.New("file exceeds limit or is not regular")
+	}
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(f, limit+1))
+	if err != nil {
+		return "", err
+	}
+	if n > limit {
+		return "", errors.New("file grew past size limit")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
 func ReadBounded(path string, limit int64) ([]byte, error) {
 	f, e := os.Open(path)
 	if e != nil {

@@ -216,10 +216,12 @@ func run() error {
 				return e
 			}
 			if existing, e := store.Get(r.ID); e == nil {
-				if core.Digest(existing) != core.Digest(r) {
+				a, ae := existing.CaseDigest()
+				b, be := r.CaseDigest()
+				if ae != nil || be != nil || a != b || core.Digest(existing) != core.Digest(r) {
 					return errors.New("run id collision")
 				}
-			} else if e = store.Commit(&r, "run.imported", nil); e != nil {
+			} else if _, e = store.ImportRun(r); e != nil {
 				return e
 			}
 			fmt.Printf("Opened %s\n", r.ID)

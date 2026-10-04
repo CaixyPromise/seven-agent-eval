@@ -103,57 +103,15 @@ def evaluate(ctx):
     return out
 
 def process(ctx):
-    output = _process(ctx)
-    output["data"]["anomaly_count"] = len(output["data"]["failure_ids"])
-    output["report"] = {"version":"1", "kpis":{"scored":"/scored", "coverage":"/coverage", "anomalies":"/anomaly_count"}}
-    return output
-
-def _process(ctx):
-    if ctx.get("comparison"):
-        from .comparison import process as comparison_process
-        return comparison_process(ctx)
-    cases = ctx["cases"]
-    grouped = defaultdict(list)
-    for item in cases:
-        for m in item["metrics"]:
-            key = json.dumps([m["metric_id"], m["evaluator"], m.get("parameters", {})], sort_keys=True)
-            grouped[key].append(m)
-    series = []
-    for key, items in sorted(grouped.items()):
-        mid, evaluator, parameters = json.loads(key)
-        observed = [m["value"] for m in items if m["status"] == "observed"]
-        stats = {"metric_id": mid, "evaluator": evaluator, "parameters": parameters,
-                 "total": len(items), "observed": len(observed),
-                 "statuses": dict(Counter(m["status"] for m in items))}
-        if observed and all(type(v) is bool for v in observed):
-            stats.update(passed=sum(observed), failed=len(observed)-sum(observed),
-                         rate=sum(observed)/len(observed))
-        elif observed and all(type(v) in (int, float) for v in observed):
-            ordered = sorted(observed)
-            stats.update(mean=statistics.mean(ordered), median=statistics.median(ordered),
-                         p95=ordered[max(0, math.ceil(.95*len(ordered))-1)], min=ordered[0], max=ordered[-1])
-        series.append(stats)
-    scored = sum(any(m["status"] == "observed" for m in c["metrics"]) for c in cases)
-    failure_ids = [c["case"]["id"] for c in cases if c["status"] != "completed" or
-                   any(m["status"] == "observed" and m["value"] is False for m in c["metrics"])]
-    window_stats = process_window(ctx) if ctx.get("window") else None
-    episodes=[]
-    for episode in ctx.get("episodes") or []:
-        subset=[c for c in cases if c["case"].get("metadata",{}).get("episode_id")==episode["id"]]
-        aggregate=process({"cases":subset,"total":len(episode["case_ids"]),"input_digest":ctx["input_digest"]})["data"]
-        episodes.append({"id":episode["id"],"status":episode["status"],**aggregate})
-    if window_stats is not None:
-        scored = window_stats['scored']
-    return {"processor": "builtin.basic-summary@1",
-            "data": {"total": ctx["total"], "processed": len(cases), "scored": scored,
-                     **({"episodes":episodes} if episodes else {}),
-                     **({"window": window_stats} if window_stats is not None else {}),
-                     "pending": max(0, ctx["total"]-len(cases)),
-                     "coverage": scored/ctx["total"] if ctx["total"] else None,
-                     "case_statuses": dict(Counter(c["status"] for c in cases)),
-                     "series": series, "rag_quality": rag_quality(series), "failure_ids": failure_ids,
-                     "note": "覆盖率表示产生了有效指标的样本比例，不代表业务正确率。"},
-            "input_digest": ctx["input_digest"]}
+    """Small in-process fixture helper; workers expose only processor/reduce."""
+    import tempfile
+    from .reducer import reduce
+    with tempfile.TemporaryDirectory() as directory:
+        context = {**ctx, "workspace": directory, "phase": "initialize", "state": None}
+        state = reduce(context)
+        for offset in range(0, len(ctx["cases"]), 32):
+            state = reduce({**context, "phase": "update", "state": state, "cases": ctx["cases"][offset:offset+32]})
+        return reduce({**context, "phase": "finalize", "state": state, "cases": []})
 
 def rag_quality(series):
     """Macro means across K, isolated by evaluator and all remaining parameters.
@@ -181,38 +139,7 @@ def rag_quality(series):
             for key in sorted(groups)]
 
 def process_window(ctx):
-    window = ctx["window"]
-    cases = ctx["cases"]
-    facts = window.get("facts", [])
-    reasons = Counter(m.get("reason") for c in cases for m in c["metrics"] if m.get("reason"))
-    failed = sum(c["status"] == "error" or any(m["status"] == "error" for m in c["metrics"]) for c in cases)
-    scored = sum(c["status"] != "error" and not any(m["status"] == "error" for m in c["metrics"]) and any(m["status"] == "observed" for m in c["metrics"]) for c in cases)
-    insufficient = sum(c["status"] != "error" and not any(m["status"] in ("error", "observed") for m in c["metrics"]) and any(m["status"] == "not_computable" for m in c["metrics"]) for c in cases)
-    def seconds(value):
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    delays = sorted(max(0, (seconds(f["scored_at"])-seconds(f["received_at"]))*1000) for f in facts if f.get("scored_at"))
-    sampled = sum(any(m["status"] not in ("skipped", "budget_exhausted") for m in c["metrics"]) for c in cases)
-    stats = {"received":len(facts), "eligible":len(facts), "sampled":sampled, "scored":scored,
-             "unscored":len(cases)-scored-failed-insufficient,
-             "skipped":sum(any(m["status"] == "skipped" for m in c["metrics"]) for c in cases),
-             "budget_exhausted":sum(any(m["status"] == "budget_exhausted" for m in c["metrics"]) for c in cases),
-             "failed":failed, "not_computable":insufficient, "pending":len(facts)-len(cases),
-             "coverage":scored/len(facts) if facts else None, "reasons":dict(reasons),
-             "anomalies":sum(c["status"] != "completed" or any(m["status"] == "error" or (m["status"] == "observed" and m["value"] is False) for m in c["metrics"]) for c in cases)}
-    if delays:
-        stats.update(p50_latency_ms=delays[max(0, math.ceil(.5*len(delays))-1)], p95_latency_ms=delays[max(0, math.ceil(.95*len(delays))-1)])
-    changes = defaultdict(int)
-    for fact in window.get('backlog_facts', facts):
-        changes[fact['received_at']] += 1
-        if fact.get('scored_at'):
-            changes[fact['scored_at']] -= 1
-    pending, backlog = 0, []
-    for stamp in sorted(changes, key=seconds):
-        pending += changes[stamp]
-        backlog.append({'time': stamp, 'pending': pending})
-    stats['backlog_series'] = backlog
-    stats["series"] = {"time":window["start"], **{k:v for k,v in stats.items() if k not in ("reasons", "anomalies", "backlog_series")}}
-    return stats
+    return process({**ctx, "total": len(ctx["window"].get("facts", [])), "input_digest": "fixture"})["data"]["window"]
 
 def conclude(ctx):
     summary = next((o["data"] for o in ctx["outputs"] if o["processor"] == "builtin.basic-summary@1"), None)
@@ -228,6 +155,6 @@ def conclude(ctx):
     code = "rules_failed" if failures else "rules_checked" if count else "insufficient_evidence"
     text = (f"已执行 {count} 项显式规则检查，其中 {failures} 项失败。" if count
             else "未提供可判定任务正确性的业务参考；当前仅报告基础事实。")
-    text += f" 已处理 {summary['processed']}/{summary['total']} 条；异常样本 {len(summary['failure_ids'])} 条。"
+    text += f" 已处理 {summary['processed']}/{summary['total']} 条；异常样本 {summary['anomaly_count']} 条。"
     return [{"handler": "builtin.basic-conclusion@1", "code": code,
              "level": "warning" if failures or not count or summary["failure_ids"] else "info", "summary": text}]

@@ -7,7 +7,9 @@ export const errorCopy = {
   PACKAGE_INVALID: "无法读取评测目录。请检查 evaluation.yaml 后重新扫描。",
   BUNDLE_INVALID:
     "结果文件不完整或格式不受支持。请选择有效的 .seven.eval 文件。",
-  BUNDLE_TOO_LARGE: "结果文件超过 64 MiB。请选择更小的结果包。",
+  BUNDLE_TOO_LARGE: "结果文件超过 4 GiB。请选择更小的结果包。",
+  CASE_NOT_FOUND: "找不到这条样本。请刷新样本列表后重新选择。",
+  PAGE_INVALID: "无法读取这一页。请返回样本列表重新选择页码。",
   BUNDLE_EXISTS: "这份结果已在运行记录中。可关闭导入框并查看已有报告。",
   ACCESS_DENIED: "当前页面不能执行此操作。请从本地工作区地址重新打开。",
   EXPORT_UNAVAILABLE: "这次结果暂时无法导出。请刷新报告，确认运行状态。",
@@ -15,6 +17,8 @@ export const errorCopy = {
   LOAD_ASSETS: "暂时无法加载评测资产。请重新扫描。",
   LOAD_RUNS: "暂时无法加载运行记录。请重试。",
   LOAD_RUN: "暂时无法加载这份报告。请重试。",
+  LOAD_CASES: "暂时无法加载样本列表。请重试。",
+  LOAD_CASE: "暂时无法加载这条样本的证据。请重试。",
   START_UNKNOWN: "未能确认评测是否已启动。请先查看运行记录，避免重复调用。",
   CANCEL_UNKNOWN: "未能确认取消结果。请刷新运行状态。",
   IMPORT_UNKNOWN:

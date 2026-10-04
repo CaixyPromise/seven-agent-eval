@@ -72,7 +72,7 @@ func TestLiveIngestDeduplicatesScoresAndExports(t *testing.T) {
 	if err = Export(*report.Current, p); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ImportFile(p); err != nil {
+	if _, err = importFixture(t, p); err != nil {
 		t.Fatal(err)
 	}
 }

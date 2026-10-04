@@ -3,11 +3,15 @@ package core
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"seven-agent-eval/protocol"
 	"strconv"
 )
@@ -32,62 +36,83 @@ type MappingConfig struct {
 	Conversions map[string]string `yaml:"conversions"`
 }
 
-func (e *Engine) readSource(d Discovery, p Plan) ([]Case, DatasetRevision, error) {
+func (e *Engine) visitSource(ctx context.Context, d Discovery, p Plan, emit func(Case) error) (DatasetRevision, error) {
 	rev := DatasetRevision{Files: map[string]string{}}
 	a, err := Lookup(d, p.Source, "source")
 	if err != nil {
-		return nil, rev, err
+		return rev, err
 	}
 	descriptor, err := SafePath(e.Root, a.Path)
 	if err != nil {
-		return nil, rev, err
+		return rev, err
 	}
 	var cfg SourceConfig
 	if err = ReadDocument(descriptor, &cfg); err != nil {
-		return nil, rev, err
+		return rev, err
 	}
 	rev.SourceID, rev.SourceVersion = a.ID, a.Version
 	rev.Files[a.Path] = fmt.Sprint(a.Descriptor["digest"])
 	if cfg.Format == "seven-history" {
 		if p.Mode != "replay" {
-			return nil, rev, errors.New("Seven history requires replay mode")
+			return rev, errors.New("Seven history requires replay mode")
 		}
-		return e.readSevenHistory(cfg, rev)
+		cases, frozen, err := e.readSevenHistory(cfg, rev)
+		if err != nil {
+			return frozen, err
+		}
+		for _, c := range cases {
+			if err := emit(c); err != nil {
+				return frozen, err
+			}
+		}
+		return frozen, nil
 	}
 	if cfg.Format == "beir" || cfg.Format == "trec" {
 		if p.Mapping != "" {
-			return nil, rev, errors.New("BEIR/TREC use their standardized mapping")
+			return rev, errors.New("BEIR/TREC use their standardized mapping")
 		}
-		return e.readRetrievalSource(cfg, rev, p)
+		return e.visitRetrievalSource(ctx, cfg, rev, p, emit)
 	}
 	path, err := SafePath(e.Root, cfg.Path)
 	if err != nil {
-		return nil, rev, err
+		return rev, err
 	}
-	body, err := ReadBounded(path, MaxFileBytes)
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, rev, err
+		return rev, err
 	}
-	rev.Files[cfg.Path] = Hash(body)
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		return rev, err
+	}
+	if !stat.Mode().IsRegular() || stat.Size() > MaxInputFileBytes {
+		return rev, errors.New("source file exceeds input limit")
+	}
+	hash := sha256.New()
+	limited := &io.LimitedReader{R: file, N: MaxInputFileBytes + 1}
+	reader := io.TeeReader(limited, hash)
 	var mapping MappingConfig
 	if p.Mapping != "" {
 		m, er := Lookup(d, p.Mapping, "mapping")
 		if er != nil {
-			return nil, rev, er
+			return rev, er
 		}
 		mp, er := SafePath(e.Root, m.Path)
 		if er != nil {
-			return nil, rev, er
+			return rev, er
 		}
 		if er = ReadDocument(mp, &mapping); er != nil {
-			return nil, rev, er
+			return rev, er
 		}
 		rev.MappingID, rev.MappingVersion = m.ID, m.Version
 		rev.Files[m.Path] = fmt.Sprint(m.Descriptor["digest"])
 	}
-	cases := []Case{}
-	seen := map[string]bool{}
+	count := 0
 	appendRow := func(row any, line int) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		value := row
 		if mapping.Fields != nil {
 			value, err = mapValue(mapping.Fields, row)
@@ -155,19 +180,15 @@ func (e *Engine) readSource(d Discovery, p Plan) ([]Case, DatasetRevision, error
 		if er = decodeJSON(b, &c); er != nil {
 			return er
 		}
-		if seen[c.ID] {
-			return fmt.Errorf("source row %d: duplicate case id", line)
-		}
-		seen[c.ID] = true
-		cases = append(cases, c)
-		if len(cases) > MaxCases {
+		count++
+		if count > MaxCases {
 			return errors.New("source exceeds 1000 cases")
 		}
-		return nil
+		return emit(c)
 	}
 	switch cfg.Format {
 	case "jsonl":
-		scan := bufio.NewScanner(bytes.NewReader(body))
+		scan := bufio.NewScanner(reader)
 		scan.Buffer(make([]byte, 4096), 1<<20)
 		line := 0
 		for scan.Scan() {
@@ -177,35 +198,44 @@ func (e *Engine) readSource(d Discovery, p Plan) ([]Case, DatasetRevision, error
 			}
 			var row map[string]any
 			if err = decodeJSON(scan.Bytes(), &row); err != nil {
-				return nil, rev, fmt.Errorf("source row %d: invalid JSON", line)
+				return rev, fmt.Errorf("source row %d: invalid JSON", line)
 			}
 			if err = appendRow(row, line); err != nil {
-				return nil, rev, err
+				return rev, err
 			}
 		}
 		if err = scan.Err(); err != nil {
-			return nil, rev, err
+			return rev, err
 		}
 	case "csv":
-		reader := csv.NewReader(bytes.NewReader(body))
+		bounded := &csvRecordReader{reader: reader, remaining: inputRecordBytes}
+		reader := csv.NewReader(bounded)
 		headers, er := reader.Read()
 		if er != nil {
-			return nil, rev, er
+			return rev, er
+		}
+		if reader.InputOffset() > inputRecordBytes {
+			return rev, errors.New("CSV header exceeds record limit")
 		}
 		keys := map[string]bool{}
 		for _, key := range headers {
 			if key == "" || keys[key] {
-				return nil, rev, errors.New("duplicate or empty CSV header")
+				return rev, errors.New("duplicate or empty CSV header")
 			}
 			keys[key] = true
 		}
 		for {
+			bounded.remaining = inputRecordBytes
+			before := reader.InputOffset()
 			cells, er := reader.Read()
 			if er == io.EOF {
 				break
 			}
 			if er != nil {
-				return nil, rev, er
+				return rev, er
+			}
+			if reader.InputOffset()-before > inputRecordBytes {
+				return rev, errors.New("CSV row exceeds record limit")
 			}
 			row := map[string]any{}
 			for i, key := range headers {
@@ -213,18 +243,39 @@ func (e *Engine) readSource(d Discovery, p Plan) ([]Case, DatasetRevision, error
 			}
 			line, _ := reader.FieldPos(0)
 			if err = appendRow(row, line); err != nil {
-				return nil, rev, err
+				return rev, err
 			}
 		}
 	default:
-		return nil, rev, errors.New("unsupported source format")
+		return rev, errors.New("unsupported source format")
 	}
-	if len(cases) == 0 {
-		return nil, rev, errors.New("empty source")
+	if count == 0 {
+		return rev, errors.New("empty source")
 	}
-	rev.Digest = Digest(struct {
-		Revision DatasetRevision
-		Cases    []Case
-	}{rev, cases})
-	return cases, rev, nil
+	if limited.N == 0 {
+		return rev, errors.New("source grew past size limit")
+	}
+	rev.Files[cfg.Path] = hex.EncodeToString(hash.Sum(nil))
+	rev.Digest = Digest(rev)
+	return rev, nil
+}
+
+// encoding/csv may otherwise allocate an entire unbounded multiline field. Its
+// internal 4-KiB lookahead plus this resettable budget bounds allocations before
+// Read returns; InputOffset enforces the exact logical-record limit afterwards.
+type csvRecordReader struct {
+	reader    io.Reader
+	remaining int
+}
+
+func (r *csvRecordReader) Read(p []byte) (int, error) {
+	if r.remaining == 0 {
+		return 0, errors.New("CSV row exceeds record limit")
+	}
+	if len(p) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.reader.Read(p)
+	r.remaining -= n
+	return n, err
 }

@@ -48,7 +48,7 @@ func TestProjectionFailurePreservesDurableCases(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer recovered.Close()
-	got, err := recovered.Get(r.ID)
+	got, err := getFixture(t, recovered, r.ID)
 	if err != nil || got.Completed != 1 || len(got.Cases) != 1 || got.Status != "partial" {
 		t.Fatalf("lost journal result: %+v %v", got, err)
 	}
@@ -101,7 +101,7 @@ func runPlan(t *testing.T, e *Engine, plan string) Run {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err = e.Execute(context.Background(), r)
+	r, err = executeFixture(t, e, context.Background(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestOfflineDefaultsBundleAndRebuild(t *testing.T) {
 	if err := Export(r, dest); err != nil {
 		t.Fatal(err)
 	}
-	imported, err := ImportFile(dest)
+	imported, err := importFixture(t, dest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestOfflineDefaultsBundleAndRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rebuilt.Close()
-	again, err := rebuilt.Get(r.ID)
+	again, err := getFixture(t, rebuilt, r.ID)
 	if err != nil || Digest(again) != Digest(r) {
 		t.Fatal("projection rebuild mismatch", err)
 	}
@@ -237,7 +237,7 @@ func TestCancelledInvocationRetainsPartialReport(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { <-started; cancel() }()
-	r, err = e.Execute(ctx, r)
+	r, err = executeFixture(t, e, ctx, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestLocalHelperFrozenAtPreparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	put(t, root, "processors/_helper.py", "VALUE='changed'\n")
-	r, err = e.Execute(context.Background(), r)
+	r, err = executeFixture(t, e, context.Background(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestUnfinishedRunRecoveryNeverReinvokes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rebuilt.Close()
-	recovered, err := rebuilt.Get(r.ID)
+	recovered, err := getFixture(t, rebuilt, r.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

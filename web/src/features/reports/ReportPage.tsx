@@ -18,15 +18,14 @@ import { evaluationApi } from "../../api/client";
 import { safeErrorCode, type ErrorCode } from "../../api/errors";
 import { basicSummary, formatDate, isLive } from "../../domain/presentation";
 import { reportKpis } from "../../domain/reportKpis";
-import type { CaseResult } from "../../domain/types";
 import { useRun } from "../runs/useRun";
 import { StatusBadge } from "../../components/StatusBadge";
 import { ErrorNotice, LoadingState } from "../../components/Feedback";
 import { JsonDetails } from "../../components/JsonDetails";
 import { MetricSummary } from "./MetricSummary";
 import { EpisodeTable } from "./EpisodeTable";
-import { SampleTable } from "./SampleTable";
-import { SampleDrawer } from "./SampleDrawer";
+import { PagedSamples } from "./PagedSamples";
+import { RemoteSample } from "./RemoteSample";
 const RagQualityChart = lazy(() => import("./RagQualityChart"));
 const ComparisonPanel = lazy(() => import("../comparison/ComparisonPanel").then(module=>({default:module.ComparisonPanel})));
 export default function ReportPage({
@@ -43,7 +42,7 @@ export default function ReportPage({
     refresh,
     disconnected,
   } = useRun(id, onFinished);
-  const [sample, setSample] = useState<CaseResult | null>(null);
+  const [sample, setSample] = useState<string | null>(null);
   const [actionError, setActionError] = useState<ErrorCode | null>(null),
     [action, setAction] = useState<"cancel" | "export" | null>(null);
   const actionLock = useRef(false);
@@ -230,12 +229,12 @@ export default function ReportPage({
             <Tabs
               defaultActiveKey="samples"
               items={[
-                ...(run.episodes?.length ? [{key:"episodes",label:"Episode 与 Turns",children:<EpisodeTable episodes={run.episodes} samples={run.cases} onOpen={setSample} />}] : []),
+                ...(run.episodes?.length ? [{key:"episodes",label:"Episode 与 Turns",children:<EpisodeTable episodes={run.episodes} onOpen={setSample} />}] : []),
                 {
                   key: "samples",
                   label: "样本与证据",
                   children: (
-                    <SampleTable samples={run.cases} onOpen={setSample} />
+                    <PagedSamples key={run.id} runID={run.id} completed={run.completed} onOpen={setSample} />
                   ),
                 },
                 {
@@ -270,7 +269,7 @@ export default function ReportPage({
             />
           </section>
           {sample ? (
-            <SampleDrawer sample={sample} onClose={() => setSample(null)} />
+            <RemoteSample key={run.id+":"+sample} runID={run.id} caseID={sample} onClose={() => setSample(null)} />
           ) : null}
         </>
       ) : null}

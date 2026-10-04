@@ -51,7 +51,7 @@ func TestComparisonFrozenInputParametersAndPortableBundle(t *testing.T) {
 	if err := Export(r, dest); err != nil {
 		t.Fatal(err)
 	}
-	imported, err := ImportFile(dest)
+	imported, err := importFixture(t, dest)
 	if err != nil || Digest(imported) != Digest(r) {
 		t.Fatalf("portable comparison: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestComparisonCancellationRetainsCompletedCases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err = e.Execute(ctx, r)
+	r, err = executeFixture(t, e, ctx, r)
 	if err != nil {
 		t.Fatal(err)
 	}

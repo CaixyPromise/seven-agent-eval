@@ -43,7 +43,7 @@ export function ImportDialog({
       setError("FILE_TYPE");
       return;
     }
-    if (file.size > 64 * 1024 * 1024) {
+    if (file.size > 4 * 1024 * 1024 * 1024) {
       setError("BUNDLE_TOO_LARGE");
       return;
     }
@@ -70,7 +70,7 @@ export function ImportDialog({
       destroyOnHidden
     >
       <Form layout="vertical" onFinish={() => void submit()}>
-        <Form.Item label="结果文件" extra="单个文件不超过 64 MiB。">
+        <Form.Item label="结果文件" extra="单个文件不超过 4 GiB。">
           <Upload.Dragger
             accept=".seven.eval"
             multiple={false}

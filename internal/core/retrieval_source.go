@@ -2,210 +2,266 @@ package core
 
 import (
 	"bufio"
-	"bytes"
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
-	"sort"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
 
-// BEIR and TREC normalize to the same Case/qrels/ranked-document vocabulary.
-func (e *Engine) readRetrievalSource(cfg SourceConfig, rev DatasetRevision, p Plan) ([]Case, DatasetRevision, error) {
-	total := 0
-	read := func(rel string) ([]byte, error) {
-		path, err := SafePath(e.Root, rel)
-		if err != nil {
-			return nil, err
-		}
-		b, err := ReadBounded(path, MaxFileBytes)
-		if err != nil {
-			return nil, err
-		}
-		total += len(b)
-		if total > MaxFileBytes {
-			return nil, errors.New("combined source exceeds 32 MiB")
-		}
-		rev.Files[rel] = Hash(b)
-		return b, nil
+// Retrieval source joins and uniqueness checks live on disk; only one query's
+// references and ranked evidence are materialized at a time.
+func (e *Engine) visitRetrievalSource(ctx context.Context, cfg SourceConfig, rev DatasetRevision, p Plan, emit func(Case) error) (DatasetRevision, error) {
+	dir, err := os.MkdirTemp(e.Store.Root, ".retrieval-")
+	if err != nil {
+		return rev, err
 	}
-	documents := map[string]RetrievalDocument{}
-	queries := map[string]string{}
-	order := []string{}
-	rows := func(rel string, consume func(map[string]any) error) error {
-		b, err := read(rel)
+	defer os.RemoveAll(dir)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "joins.sqlite"))
+	if err != nil {
+		return rev, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(`PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA foreign_keys=ON;
+ CREATE TABLE queries(seq INTEGER PRIMARY KEY,id TEXT UNIQUE,text TEXT);
+ CREATE TABLE documents(id TEXT PRIMARY KEY,body TEXT);
+ CREATE TABLE qrels(q TEXT REFERENCES queries(id),d TEXT,grade INTEGER,PRIMARY KEY(q,d));
+ CREATE TABLE ranked(q TEXT REFERENCES queries(id),d TEXT,rank INTEGER,score REAL,PRIMARY KEY(q,d),UNIQUE(q,rank));`)
+	if err != nil {
+		return rev, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return rev, err
+	}
+	defer tx.Rollback()
+	var total int64
+	lines := func(rel string, consume func([]byte, int) error) error {
+		path, err := SafePath(e.Root, rel)
 		if err != nil {
 			return err
 		}
-		scan := bufio.NewScanner(bytes.NewReader(b))
-		scan.Buffer(make([]byte, 4096), 1<<20)
-		line := 0
-		for scan.Scan() {
-			line++
-			var row map[string]any
-			if err = decodeJSON(scan.Bytes(), &row); err != nil {
-				return fmt.Errorf("source row %d: invalid JSON", line)
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		stat, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		if !stat.Mode().IsRegular() {
+			return errors.New("source requires regular file")
+		}
+		limited := &io.LimitedReader{R: f, N: int64(MaxInputFileBytes) - total + 1}
+		h := sha256.New()
+		scan := bufio.NewScanner(io.TeeReader(limited, h))
+		scan.Buffer(make([]byte, 4096), inputRecordBytes)
+		for line := 1; scan.Scan(); line++ {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			if err = consume(row); err != nil {
+			if err := consume(scan.Bytes(), line); err != nil {
 				return fmt.Errorf("source row %d: %w", line, err)
 			}
 		}
-		return scan.Err()
+		if err := scan.Err(); err != nil {
+			return err
+		}
+		if limited.N == 0 {
+			return errors.New("combined source exceeds current size limit")
+		}
+		total = int64(MaxInputFileBytes) + 1 - limited.N
+		rev.Files[rel] = hex.EncodeToString(h.Sum(nil))
+		return nil
 	}
-	err := rows(cfg.Queries, func(row map[string]any) error {
+	count := 0
+	err = lines(cfg.Queries, func(b []byte, _ int) error {
+		var row map[string]any
+		if err := decodeJSON(b, &row); err != nil {
+			return errors.New("invalid query JSON")
+		}
 		id, ok := row["_id"].(string)
-		text, textOK := row["text"].(string)
+		value, textOK := row["text"].(string)
 		if !ok || id == "" || !textOK {
 			return errors.New("query requires _id and text")
 		}
-		if _, ok = queries[id]; ok {
-			return errors.New("duplicate query id")
+		count++
+		if count > MaxCases {
+			return errors.New("source exceeds current query limit")
 		}
-		queries[id] = text
-		order = append(order, id)
-		if len(order) > MaxCases {
-			return errors.New("source exceeds 1000 queries")
+		if _, err := tx.ExecContext(ctx, "INSERT INTO queries VALUES(?,?,?)", count, id, value); err != nil {
+			return errors.New("duplicate query id")
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, rev, err
+		return rev, err
+	}
+	if count == 0 {
+		return rev, errors.New("empty queries")
 	}
 	if cfg.Corpus != "" {
-		err = rows(cfg.Corpus, func(row map[string]any) error {
+		err = lines(cfg.Corpus, func(b []byte, _ int) error {
+			var row map[string]any
+			if err := decodeJSON(b, &row); err != nil {
+				return errors.New("invalid document JSON")
+			}
 			id, ok := row["_id"].(string)
-			text, textOK := row["text"].(string)
+			body, textOK := row["text"].(string)
 			if !ok || id == "" || !textOK {
 				return errors.New("document requires _id and text")
 			}
-			if _, ok = documents[id]; ok {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO documents VALUES(?,?)", id, body); err != nil {
 				return errors.New("duplicate document id")
 			}
-			documents[id] = RetrievalDocument{ID: id, Text: text}
 			return nil
 		})
 		if err != nil {
-			return nil, rev, err
+			return rev, err
 		}
 	}
-	qrels := map[string]map[string]int{}
-	b, err := read(cfg.Qrels)
-	if err != nil {
-		return nil, rev, err
+	documentExists := func(id string) error {
+		if cfg.Corpus == "" {
+			return nil
+		}
+		var exists int
+		if err := tx.QueryRowContext(ctx, "SELECT 1 FROM documents WHERE id=?", id).Scan(&exists); err != nil {
+			return errors.New("unknown document")
+		}
+		return nil
 	}
-	scan := bufio.NewScanner(bytes.NewReader(b))
-	line := 0
-	for scan.Scan() {
-		line++
-		fields := strings.Fields(scan.Text())
+	err = lines(cfg.Qrels, func(b []byte, line int) error {
+		fields := strings.Fields(string(b))
 		if len(fields) == 0 {
-			continue
+			return nil
 		}
 		if cfg.Format == "beir" && line == 1 && fields[0] == "query-id" {
-			continue
+			return nil
 		}
-		didx, gidx := 1, 2
+		di, gi := 1, 2
 		if cfg.Format == "trec" {
-			didx, gidx = 2, 3
+			di, gi = 2, 3
 		}
-		if len(fields) != gidx+1 {
-			return nil, rev, fmt.Errorf("qrels row %d: wrong column count", line)
+		if len(fields) != gi+1 {
+			return errors.New("qrels wrong column count")
 		}
-		q, d := fields[0], fields[didx]
-		grade, er := strconv.Atoi(fields[gidx])
-		if er != nil || grade < 0 {
-			return nil, rev, fmt.Errorf("qrels row %d: invalid relevance", line)
+		grade, err := strconv.Atoi(fields[gi])
+		if err != nil || grade < 0 {
+			return errors.New("invalid relevance")
 		}
-		if _, ok := queries[q]; !ok {
-			return nil, rev, errors.New("qrels references unknown query")
+		if err := documentExists(fields[di]); err != nil {
+			return err
 		}
-		if cfg.Corpus != "" {
-			if _, ok := documents[d]; !ok {
-				return nil, rev, errors.New("qrels references unknown document")
-			}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO qrels VALUES(?,?,?)", fields[0], fields[di], grade); err != nil {
+			return errors.New("duplicate qrel or unknown query")
 		}
-		if qrels[q] == nil {
-			qrels[q] = map[string]int{}
-		}
-		if _, ok := qrels[q][d]; ok {
-			return nil, rev, errors.New("duplicate qrel")
-		}
-		qrels[q][d] = grade
+		return nil
+	})
+	if err != nil {
+		return rev, err
 	}
-	if err = scan.Err(); err != nil {
-		return nil, rev, err
-	}
-	type ranked struct {
-		rank int
-		doc  RetrievalDocument
-	}
-	rankings := map[string][]ranked{}
 	if cfg.Run != "" {
-		b, err = read(cfg.Run)
-		if err != nil {
-			return nil, rev, err
-		}
-		scan = bufio.NewScanner(bytes.NewReader(b))
-		seen := map[string]bool{}
-		for scan.Scan() {
-			f := strings.Fields(scan.Text())
+		err = lines(cfg.Run, func(b []byte, _ int) error {
+			f := strings.Fields(string(b))
 			if len(f) == 0 {
-				continue
+				return nil
 			}
 			if len(f) != 6 {
-				return nil, rev, errors.New("TREC run requires six columns")
+				return errors.New("TREC run requires six columns")
 			}
-			q, d := f[0], f[2]
 			rank, er := strconv.Atoi(f[3])
 			score, se := strconv.ParseFloat(f[4], 64)
 			if er != nil || se != nil || rank < 1 || math.IsNaN(score) || math.IsInf(score, 0) {
-				return nil, rev, errors.New("invalid TREC rank/score")
+				return errors.New("invalid TREC rank/score")
 			}
-			if _, ok := queries[q]; !ok {
-				return nil, rev, errors.New("run references unknown query")
+			if err := documentExists(f[2]); err != nil {
+				return err
 			}
-			for _, key := range []string{q + ":doc:" + d, q + ":rank:" + strconv.Itoa(rank)} {
-				if seen[key] {
-					return nil, rev, errors.New("duplicate run rank/document")
-				}
-				seen[key] = true
+			if _, err := tx.ExecContext(ctx, "INSERT INTO ranked VALUES(?,?,?,?)", f[0], f[2], rank, score); err != nil {
+				return errors.New("duplicate rank/document or unknown query")
 			}
-			doc := documents[d]
-			if cfg.Corpus != "" && doc.ID == "" {
-				return nil, rev, errors.New("run references unknown document")
-			}
-			doc.ID = d
-			doc.Score = &score
-			rankings[q] = append(rankings[q], ranked{rank, doc})
-		}
-		if err = scan.Err(); err != nil {
-			return nil, rev, err
+			return nil
+		})
+		if err != nil {
+			return rev, err
 		}
 	}
-	cases := []Case{}
-	for _, q := range order {
+	for seq := 1; seq <= count; seq++ {
+		var id, query string
+		if err := tx.QueryRowContext(ctx, "SELECT id,text FROM queries WHERE seq=?", seq).Scan(&id, &query); err != nil {
+			return rev, err
+		}
 		refs := map[string]any{}
-		if qrels[q] != nil {
-			refs["qrels"] = qrels[q]
+		qrels := map[string]int{}
+		size := len(id) + len(query)
+		rows, err := tx.QueryContext(ctx, "SELECT d,grade FROM qrels WHERE q=? ORDER BY d", id)
+		if err != nil {
+			return rev, err
+		}
+		err = func() error {
+			defer rows.Close()
+			for rows.Next() {
+				var doc string
+				var grade int
+				if err := rows.Scan(&doc, &grade); err != nil {
+					return err
+				}
+				size += len(doc) + 32
+				if size > inputRecordBytes {
+					return errors.New("query references exceed record limit")
+				}
+				qrels[doc] = grade
+			}
+			return rows.Err()
+		}()
+		if err != nil {
+			return rev, err
+		}
+		if len(qrels) > 0 {
+			refs["qrels"] = qrels
 		}
 		docs := []RetrievalDocument{}
-		sort.Slice(rankings[q], func(i, j int) bool { return rankings[q][i].rank < rankings[q][j].rank })
-		for _, r := range rankings[q] {
-			docs = append(docs, r.doc)
+		rows, err = tx.QueryContext(ctx, "SELECT r.d,COALESCE(d.body,''),r.score FROM ranked r LEFT JOIN documents d ON d.id=r.d WHERE r.q=? ORDER BY r.rank", id)
+		if err != nil {
+			return rev, err
 		}
-		c := Case{ID: q, Inputs: map[string]any{"text": queries[q]}, References: refs, Metadata: map[string]any{"split": cfg.Split}}
+		err = func() error {
+			defer rows.Close()
+			for rows.Next() {
+				var doc RetrievalDocument
+				var score float64
+				if err := rows.Scan(&doc.ID, &doc.Text, &score); err != nil {
+					return err
+				}
+				size += len(doc.ID) + len(doc.Text) + 64
+				if size > inputRecordBytes {
+					return errors.New("query retrieval exceeds record limit")
+				}
+				doc.Score = &score
+				docs = append(docs, doc)
+			}
+			return rows.Err()
+		}()
+		if err != nil {
+			return rev, err
+		}
+		c := Case{ID: id, Inputs: map[string]any{"text": query}, References: refs, Metadata: map[string]any{"split": cfg.Split}}
 		if p.Mode == "replay" {
 			c.Result = &SubjectResult{Response: "", Retrieval: docs}
 		}
-		cases = append(cases, c)
+		if err := emit(c); err != nil {
+			return rev, err
+		}
 	}
-	if len(cases) == 0 {
-		return nil, rev, errors.New("empty queries")
-	}
-	rev.Digest = Digest(struct {
-		Revision DatasetRevision
-		Cases    []Case
-	}{rev, cases})
-	return cases, rev, nil
+	rev.Digest = Digest(rev)
+	return rev, nil
 }

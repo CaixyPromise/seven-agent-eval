@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import Button from "antd/es/button";
 import Table from "antd/es/table";
 import Tabs from "antd/es/tabs";
@@ -8,24 +8,33 @@ import { JsonDetails } from "../../components/JsonDetails";
 import { StatusBadge } from "../../components/StatusBadge";
 import { RetrievalEvidence } from "../reports/RetrievalEvidence";
 import { metricLabel, pretty } from "../../domain/presentation";
+import { evaluationApi } from "../../api/client";
+import { useResource } from "../../api/useResource";
+import { ErrorNotice, LoadingState } from "../../components/Feedback";
 
 export const receiptLabel = (state?: string) => state==="target_confirmed"?"目标返回参数一致":state==="mismatch"?"目标返回参数不一致":"目标未确认参数";
 
 export function ComparisonSamples({run,caseIDs=run.comparison?.case_ids ?? []}:{run:Run;caseIDs?:string[]}) {
   const [selected,setSelected]=useState<string|null>(null);
-  const cases=selected?run.cases.filter(c=>c.case.metadata?.seven_eval_case_id===selected):[];
+  const load=useCallback(async (signal:AbortSignal)=>{
+    if(!selected) return [];
+    const page=await evaluationApi.cases(run.id,new URLSearchParams({original_id:selected,limit:"100"}),signal);
+    return Promise.all(page.items.map(item=>evaluationApi.case(run.id,item.id,signal)));
+  },[run.id,selected]);
+  const {data:cases=[],loading,error,refresh}=useResource(load,"LOAD_RUN");
   const candidates=(run.effective as {plan?:{candidates?:{id:string}[]}})?.plan?.candidates ?? [];
   return <>
     <Table rowKey={id=>id} dataSource={caseIDs} pagination={{pageSize:10}} scroll={{x:650}} columns={[
       {title:"案例",key:"id",width:220,render:(_,id)=><Button type="link" onClick={()=>setSelected(id)}>{id}</Button>},
       ...candidates.map(candidate=>({title:candidate.id,key:candidate.id,width:210,render:(_:unknown,id:string)=>{
-        const sample=run.cases.find(c=>c.case.metadata?.seven_eval_case_id===id && c.case.metadata?.seven_eval_candidate===candidate.id);
-        return sample?<><StatusBadge status={sample.status}/><small className="secondary-id">{receiptLabel(sample.result.parameter_receipt?.state)}</small></>:"未执行";
+        return <Button type="link" onClick={()=>setSelected(id)}>查看对照</Button>;
       }})),
     ]}/>
     {selected?<Dialog title={`案例对照 · ${selected}`} drawer onClose={()=>setSelected(null)}>
+      {error?<ErrorNotice code={error} onRetry={()=>void refresh()}/>:null}
+      {loading?<LoadingState label="正在加载候选结果"/>:null}
       <Tabs items={candidates.map(candidate=>{
-        const sample=cases.find(c=>c.case.metadata?.seven_eval_candidate===candidate.id);
+        const sample=cases?.find(c=>c.case.metadata?.seven_eval_candidate===candidate.id);
         return {key:candidate.id,label:candidate.id,children:sample?<>
           <StatusBadge status={sample.status}/>
           <p>{receiptLabel(sample.result.parameter_receipt?.state)}</p>

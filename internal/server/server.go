@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,14 +19,18 @@ import (
 )
 
 type Server struct {
-	Engine  *core.Engine
-	Live    *core.LiveManager
-	liveErr error
-	WebDir  string
-	mu      sync.Mutex
-	active  map[string]context.CancelFunc
-	wg      sync.WaitGroup
-	closing bool
+	Engine          *core.Engine
+	Live            *core.LiveManager
+	liveErr         error
+	WebDir          string
+	mu              sync.Mutex
+	active          map[string]context.CancelFunc
+	wg              sync.WaitGroup
+	closing         bool
+	downloadMu      sync.Mutex
+	downloads       map[string]*download
+	downloadsClosed bool
+	downloadWG      sync.WaitGroup
 }
 
 func New(e *core.Engine, web string) *Server {
@@ -48,6 +51,7 @@ func (s *Server) Shutdown() {
 	if s.Live != nil {
 		_ = s.Live.Close()
 	}
+	s.closeDownloads()
 }
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -66,6 +70,10 @@ func failure(w http.ResponseWriter, err error, code int) {
 		productCode = "BUNDLE_EXISTS"
 	case "import exceeds size limit":
 		productCode = "BUNDLE_TOO_LARGE"
+	case "case not found":
+		productCode = "CASE_NOT_FOUND"
+	case "invalid page":
+		productCode = "PAGE_INVALID"
 	case "loopback host required", "cross-origin request rejected", "cross-site request rejected":
 		productCode = "ACCESS_DENIED"
 	}
@@ -180,6 +188,10 @@ func (s *Server) Handler() http.Handler {
 		w.Write(b)
 	})
 	mux.HandleFunc("GET /api/runs/{id}/export", s.export)
+	mux.HandleFunc("POST /api/runs/{id}/export", s.export)
+	mux.HandleFunc("GET /api/downloads/{token}", s.download)
+	mux.HandleFunc("GET /api/runs/{id}/cases", s.casePage)
+	mux.HandleFunc("GET /api/runs/{id}/cases/detail", s.caseDetail)
 	mux.HandleFunc("POST /api/import", s.importRun)
 	mux.HandleFunc("GET /api/live/plans", s.livePlans)
 	mux.HandleFunc("GET /api/live/plans/{id}/report", s.liveReport)
@@ -188,6 +200,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/live/plans/{id}/resume", s.liveResume)
 	mux.HandleFunc("GET /api/live/windows/{id}", s.liveWindow)
 	mux.HandleFunc("GET /api/live/windows/{id}/export", s.liveExport)
+	mux.HandleFunc("POST /api/live/windows/{id}/export", s.liveExport)
 	mux.HandleFunc("POST /api/ingest/events", s.ingest)
 	mux.HandleFunc("POST /v1/traces", s.ingestOTLP)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
@@ -531,6 +544,10 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	s.exportRun(w, r, run)
 }
 func (s *Server) exportRun(w http.ResponseWriter, r *http.Request, run core.Run) {
+	if r.Method == http.MethodPost {
+		s.prepareDownload(w, r, run)
+		return
+	}
 	dir, e := os.MkdirTemp("", "seven-export-")
 	if e != nil {
 		failure(w, e, 500)
@@ -546,13 +563,73 @@ func (s *Server) exportRun(w http.ResponseWriter, r *http.Request, run core.Run)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", run.ID+".seven.eval"))
 	http.ServeFile(w, r, p)
 }
+func (s *Server) casePage(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.Engine.Store.Get(r.PathValue("id")); err != nil {
+		if errors.Is(err, core.ErrDataExpired) {
+			failureCode(w, "DATA_EXPIRED", http.StatusGone)
+			return
+		}
+		failure(w, errors.New("run not found"), 404)
+		return
+	}
+	q := r.URL.Query()
+	offset, limit := 0, 25
+	var err error
+	if q.Has("offset") {
+		offset, err = strconv.Atoi(q.Get("offset"))
+		if err != nil {
+			failure(w, errors.New("invalid page"), 400)
+			return
+		}
+	}
+	if q.Has("limit") {
+		limit, err = strconv.Atoi(q.Get("limit"))
+		if err != nil {
+			failure(w, errors.New("invalid page"), 400)
+			return
+		}
+	}
+	if offset < 0 || limit < 1 || limit > 100 {
+		failure(w, errors.New("invalid page"), 400)
+		return
+	}
+	v, err := s.Engine.Store.Cases(r.PathValue("id"), offset, limit, core.CaseFilter{Episode: q.Get("episode"), Candidate: q.Get("candidate"), OriginalID: q.Get("original_id"), Anomalies: q.Get("anomalies") == "true"})
+	if err != nil {
+		failure(w, err, 500)
+		return
+	}
+	jsonOut(w, v)
+}
+func (s *Server) caseDetail(w http.ResponseWriter, r *http.Request) {
+	v, err := s.Engine.Store.Case(r.PathValue("id"), r.URL.Query().Get("case_id"))
+	if errors.Is(err, core.ErrDataExpired) {
+		failureCode(w, "DATA_EXPIRED", http.StatusGone)
+		return
+	}
+	if err != nil {
+		failure(w, errors.New("case not found"), 404)
+		return
+	}
+	jsonOut(w, v)
+}
 func (s *Server) importRun(w http.ResponseWriter, r *http.Request) {
-	b, e := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<20))
+	f, e := os.CreateTemp("", "seven-import-*.seven.eval")
+	if e != nil {
+		failure(w, e, 500)
+		return
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	_, e = io.Copy(f, http.MaxBytesReader(w, r.Body, core.MaxBundleBytes))
 	if e != nil {
 		failure(w, errors.New("import exceeds size limit"), 400)
 		return
 	}
-	v, e := core.Import(bytes.NewReader(b), int64(len(b)))
+	if e = f.Close(); e != nil {
+		failure(w, e, 500)
+		return
+	}
+	v, e := core.ImportFile(f.Name())
 	if e != nil {
 		failureCode(w, "BUNDLE_INVALID", 400)
 		return
@@ -561,7 +638,7 @@ func (s *Server) importRun(w http.ResponseWriter, r *http.Request) {
 		failure(w, errors.New("run already imported"), 409)
 		return
 	}
-	if e = s.Engine.Store.Commit(&v, "run.imported", nil); e != nil {
+	if v, e = s.Engine.Store.ImportRun(v); e != nil {
 		failure(w, e, 500)
 		return
 	}

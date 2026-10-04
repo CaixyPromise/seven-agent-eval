@@ -9,17 +9,21 @@
 ```ts
 import { processor } from "@seven-agent/eval";
 
-export default processor({ id: "team-summary", version: "1.0.0" }, ctx => ({
-  processor: "team-summary@1.0.0",
-  input_digest: ctx.input_digest,
-  data: { count: ctx.cases.length },
-  report: { version: "1", kpis: { scored: "/count" } },
-}));
+export default processor({ id: "team-summary", version: "2.0.0" }, ctx => {
+  if (ctx.phase === "initialize") return { count: 0 };
+  if (ctx.phase === "update") return { count: ctx.state.count + ctx.cases!.length };
+  return {
+    processor: "team-summary@2.0.0",
+    input_digest: ctx.input_digest,
+    data: ctx.state,
+    report: { version: "1", kpis: { scored: "/count" } },
+  };
+});
 ```
 
 在计划中设置 `processors: [processor:team-summary]` 替换默认统计；省略继承，`[]` 关闭。完整可运行示例是 `examples/typescript`：`typescript`、`python` 对照计划，`missing` 关闭统计，`conflict` 演示两个首页 KPI 来源。
 
-`subject` 返回 SubjectResult（回答字段为 `response`）；`evaluator` 返回 Metric 数组；`processor` 返回 ProcessorOutput；`conclusion` 返回 Conclusion 数组。共享字段使用 snake_case，权威结构为 `protocol/schemas/exchange.json`，SDK 构建生成 `dist/exchange.d.ts`。context 类型由 SDK 导出。
+`subject` 返回 SubjectResult（回答字段为 `response`）；`evaluator` 返回 Metric 数组；`processor` 在 initialize/update 阶段返回可序列化 state，在 finalize 阶段返回 ProcessorOutput，update 每次最多接收 32 个 CaseResult；`conclusion` 接收统计输出与计数而非完整案例，返回 Conclusion 数组。共享字段使用 snake_case，权威结构为 `protocol/schemas/exchange.json`，SDK 构建生成 `dist/exchange.d.ts`。context 类型由 SDK 导出。旧的整份 Run Processor 接口已移除，详见 `docs/bounded-evaluation.md`。
 
 Subject 只接收 `inputs`、`target_parameters`、`session`，默认不含 references：
 
@@ -53,7 +57,7 @@ Go 传递可序列化 session；每次操作都是新进程，不应依赖模块
 - scored/anomalies 为非负安全整数；coverage 为 0–1。字段省略或显式 null 显示 `—`。
 - 声明的路径缺失、类型错误或越界：处理器输出无效，不能借用旧值。计数大于 JS 安全整数范围被拒绝，避免页面静默舍入。
 - 多个输出声明 report：保留所有原始输出，首页指标显示缺失并提示来源冲突。
-- 没有映射时仅旧 `builtin.basic-summary@1` 使用兼容展示；自定义同名 data 字段不触发兼容。
+- 没有显式映射就不提供首页 KPI；内置 Processor 同样必须声明映射，不按 ID 或同名字段猜测。
 - 总样本数仍由 Run 提供；结论仍由 Conclusion 产生。RAG、stream、比较图表的数据契约保持原样，不存在通用图表脚本。
 
 ## 验证入口

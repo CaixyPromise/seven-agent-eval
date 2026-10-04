@@ -1,4 +1,5 @@
 """Actual loopback HTTP comparison and portable bundle; no paid external calls."""
+from bundle_fixture import read_fixture, assert_viewer_run
 import json
 import os
 import pathlib
@@ -48,7 +49,8 @@ def reopen_without_python(bundle, expected, directory):
                     raise AssertionError("independent viewer did not become ready")
                 time.sleep(.05)
         with urllib.request.urlopen(address + "/api/runs/" + expected["id"], timeout=5) as response:
-            assert json.load(response) == expected
+            assert json.load(response) == {key:value for key,value in expected.items() if key!="cases"}
+        assert_viewer_run(address,expected)
         with urllib.request.urlopen(address + "/api/runs/" + expected["id"] + "/report", timeout=5) as response:
             report = response.read().decode()
             assert "Candidate comparison" in report and "Paired statistics" in report
@@ -82,7 +84,7 @@ def main():
             assert result.returncode==1, result.stderr  # Intentional target failures → partial.
             reply=json.loads(result.stdout)
             with zipfile.ZipFile(reply["bundle"]) as archive:
-                run=json.loads(archive.read("run.json"));html=archive.read("report.html")
+                run=read_fixture(archive);html=archive.read("report.html")
             assert run["status"]=="partial" and run["completed"]==15 and run["total"]==15
             assert CountingHandler.count==15
             assert run["comparison"]["baseline_id"]=="top-1"

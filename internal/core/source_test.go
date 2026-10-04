@@ -2,13 +2,33 @@ package core
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestCSVRecordBudgetStopsUnclosedMultilineField(t *testing.T) {
+	bounded := &csvRecordReader{reader: strings.NewReader("\"" + strings.Repeat("text\n", inputRecordBytes)), remaining: inputRecordBytes}
+	_, err := csv.NewReader(bounded).Read()
+	if err == nil || !strings.Contains(err.Error(), "record limit") {
+		t.Fatalf("expected bounded record failure, got %v", err)
+	}
+	if bounded.remaining != 0 {
+		t.Fatal("reader did not enforce byte budget")
+	}
+}
+
+// Only test fixtures collect the streaming source into an array.
+func (e *Engine) readSource(d Discovery, p Plan) ([]Case, DatasetRevision, error) {
+	cases := []Case{}
+	rev, err := e.visitSource(context.Background(), d, p, func(c Case) error { cases = append(cases, c); return nil })
+	return cases, rev, err
+}
 
 func TestAllFormatFixturesNormalizeEqually(t *testing.T) {
 	e, _, _ := fixture(t)

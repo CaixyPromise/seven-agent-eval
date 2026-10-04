@@ -9,7 +9,7 @@ const methods = [
   "subject/cleanup",
   "subject/invoke",
   "evaluator/evaluate",
-  "processor/process",
+  "processor/reduce",
   "conclusion/conclude",
 ];
 let bytes = 0;
@@ -22,7 +22,7 @@ process.stdin.on("data", (chunk) => {
 });
 async function dispatch(method: string, params: any) {
   if (method === "initialize")
-    return { protocol_version: "1.0", capabilities: methods };
+    return { protocol_version: "2.0", capabilities: methods };
   if (!methods.includes(method)) throw new Error("unsupported operation");
   const module = await import(pathToFileURL(params.path).href);
   const entries = [...new Set(Object.values(module))].filter(

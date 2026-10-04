@@ -39,7 +39,6 @@ export type Run = RunSummary & {
   dataset_revision?: unknown;
   episodes?: EpisodeResult[];
   scope?: WindowScope;
-  cases: CaseResult[];
   outputs: { processor: string; data: Record<string, unknown>; report?: {version:"1"; kpis:Partial<Record<"scored"|"coverage"|"anomalies",string>>} }[];
   conclusions: { code: string; level: string; summary: string }[];
   catalogs: unknown;
@@ -127,7 +126,7 @@ export type WindowScope = {
   judge_per_window_budget?: number;
 };
 
-export type LiveWindow = Run & { scope: WindowScope };
+export type LiveWindow = Run & { scope: WindowScope; cases: CaseResult[] };
 
 export type LivePoint = {
   unscored?: number;

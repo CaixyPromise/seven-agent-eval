@@ -5,6 +5,7 @@ Overrides are smoke profiles, never evidence for the full default capacity.
 """
 import argparse
 from datetime import datetime, timedelta, timezone
+from bundle_fixture import read_fixture, assert_viewer_run
 import json
 import hashlib
 import os
@@ -51,7 +52,7 @@ def main():
     assert 1<=args.cases<=1000 and args.seconds>=1
     OUT.mkdir(parents=True,exist_ok=True)
     # Write a failing/incomplete record first; an interrupted test cannot leave a stale PASS.
-    record={'status':'running','started_at':datetime.now(timezone.utc).isoformat(),'profile':{'cases':args.cases,'seconds':args.seconds},'binary_sha256':hashlib.sha256(BIN.read_bytes()).hexdigest(),'hardware':{'platform':platform.platform(),'cpu':subprocess.check_output(['sysctl','-n','machdep.cpu.brand_string'],text=True).strip(),'memory_bytes':int(subprocess.check_output(['sysctl','-n','hw.memsize']))},'offline':{},'limits':{'cases':1000,'bundle_uncompressed_bytes':64<<20,'legacy_10000_cases_1000000_observations':'NOT_SUPPORTED'},'scope':'local replay and loopback stream; macOS command max RSS is not summed concurrent process RSS'}
+    record={'status':'running','started_at':datetime.now(timezone.utc).isoformat(),'profile':{'cases':args.cases,'seconds':args.seconds},'binary_sha256':hashlib.sha256(BIN.read_bytes()).hexdigest(),'hardware':{'platform':platform.platform(),'cpu':subprocess.check_output(['sysctl','-n','machdep.cpu.brand_string'],text=True).strip(),'memory_bytes':int(subprocess.check_output(['sysctl','-n','hw.memsize']))},'offline':{},'limits':{'cases':10000,'bundle_uncompressed_bytes':4<<30,'million_observations':'separate large_acceptance profile'},'scope':'local replay and loopback stream; macOS command max RSS is not summed concurrent process RSS'}
     path=OUT/'acceptance.json';path.write_text(json.dumps(record,indent=2))
     with tempfile.TemporaryDirectory(prefix='seven-t12-') as temp:
         pkg=Path(temp)/'package'
@@ -67,7 +68,7 @@ def main():
         for name,evaluators in [('python','loadpy'),('node','loadjs'),('mixed','loadpy, evaluator:loadjs')]:
             (pkg/f'plans/{name}.yaml').write_text(f'schema_version: evaluate.plan/v1\nid: {name}\nmode: replay\ndataset: dataset:sample\nevaluators: [evaluator:{evaluators}]\n')
             reply,stats=timed(command+['run',name],'offline-'+name)
-            with zipfile.ZipFile(reply['bundle']) as archive:run=json.loads(archive.read('run.json'))
+            with zipfile.ZipFile(reply['bundle']) as archive:run=read_fixture(archive)
             assert run['status']=='completed' and run['completed']==args.cases
             count=sum(len(c['metrics']) for c in run['cases'])
             assert count==args.cases*(20 if name=='mixed' else 10)
@@ -79,9 +80,9 @@ def main():
             path.write_text(json.dumps(record,indent=2))
         # Hard-limit rejection happens before any Subject; no limit is silently enlarged.
         with dataset.open('w') as f:
-            for i in range(1001):f.write(json.dumps({'id':str(i),'inputs':'q','response':'a'})+'\n')
+            for i in range(10001):f.write(json.dumps({'id':str(i),'inputs':'q','response':'a'})+'\n')
         rejected=subprocess.run(command+['run','python'],text=True,capture_output=True)
-        assert rejected.returncode!=0 and '1000' in rejected.stderr,rejected.stderr
+        assert rejected.returncode!=0 and 'case limit' in rejected.stderr,rejected.stderr
         record['over_limit_preflight']='PASS'
         (pkg/'plans/production.yaml').write_text('schema_version: evaluate.plan/v1\nid: production\nmode: stream\nevaluators: [evaluator:loadpy, evaluator:loadjs]\nstream:\n  unit: trace\n  max_pending: 64\n')
         port=free_port();base=f'http://127.0.0.1:{port}';log=(OUT/'daemon.log').open('w');daemon=None
@@ -155,7 +156,7 @@ def main():
         proc=subprocess.Popen([str(BIN),'--package',str(viewer),'--addr',f'127.0.0.1:{port}','serve',str(OUT/'window.seven.eval')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:
             eventually(lambda:request(base,'/api/health'),timeout=15)
-            assert request(base,'/api/runs/'+window['id'])==window
+            assert_viewer_run(base,window)
             with urllib.request.urlopen(base+'/api/runs/'+window['id']+'/report') as res:(OUT/'report.html').write_bytes(res.read())
             record['portable_reopen_without_runtimes']='PASS'
         finally:

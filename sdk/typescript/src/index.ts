@@ -22,7 +22,11 @@ export type EvaluatorContext = {
   parameters: Parameters;
 };
 export type ProcessorContext = {
-  cases: CaseResult[];
+  phase: "initialize" | "update" | "finalize";
+  state: any;
+  workspace: string;
+  completed: number;
+  cases: CaseResult[] | null;
   total: number;
   input_digest: string;
   parameters: Parameters;
@@ -33,7 +37,8 @@ export type ProcessorContext = {
 };
 export type ConclusionContext = {
   outputs: ProcessorOutput[];
-  cases: CaseResult[];
+  total: number;
+  completed: number;
   parameters: Parameters;
 };
 type Callable<C, R> = (context: C) => R | Promise<R>;
@@ -73,7 +78,7 @@ export const evaluator = (
 ) => define("evaluator", descriptor, fn);
 export const processor = (
   descriptor: Registration,
-  fn: Callable<ProcessorContext, ProcessorOutput>,
+  fn: Callable<ProcessorContext, Record<string, unknown>>,
 ) => define("processor", descriptor, fn);
 export const conclusion = (
   descriptor: Registration,

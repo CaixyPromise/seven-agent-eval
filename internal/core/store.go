@@ -20,10 +20,10 @@ type Store struct {
 	db             *sql.DB
 	lock           *os.File
 	mu             sync.Mutex
+	importMu       sync.Mutex
 	sequence       map[string]int
 	journalFailure error
 	appendRecord   func(string, []byte) error
-	caseBytes      map[string]int
 }
 
 // ProjectionError means the event is already durable. Never append stale query
@@ -53,12 +53,16 @@ func NewStore(root string) (*Store, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{Root: root, db: db, lock: f, sequence: map[string]int{}, caseBytes: map[string]int{}}
+	s := &Store{Root: root, db: db, lock: f, sequence: map[string]int{}}
 	if _, e = db.Exec("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, body BLOB NOT NULL)"); e != nil {
 		s.Close()
 		return nil, e
 	}
-	if _, e = db.Exec("CREATE TABLE IF NOT EXISTS run_cases (run_id TEXT NOT NULL, ordinal INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(run_id,ordinal))"); e != nil {
+	if _, e = db.Exec("CREATE TABLE IF NOT EXISTS run_cases (run_id TEXT NOT NULL, ordinal INTEGER NOT NULL, body BLOB NOT NULL, case_id TEXT NOT NULL, episode TEXT NOT NULL, candidate TEXT NOT NULL, original_id TEXT NOT NULL, anomaly INTEGER NOT NULL, PRIMARY KEY(run_id,ordinal), UNIQUE(run_id,case_id))"); e != nil {
+		s.Close()
+		return nil, e
+	}
+	if e = validateStateVersion(db); e != nil {
 		s.Close()
 		return nil, e
 	}
@@ -94,38 +98,29 @@ func (s *Store) commit(r *Run, eventType string, data any) error {
 		return e
 	}
 	ev := Event{Sequence: s.sequence[r.ID] + 1, Type: eventType, Time: time.Now().UTC(), Data: data}
-	projection := *r
+	projection := runMetadata(*r)
 	var delta *CaseResult
 	if eventType == "case.completed" {
 		c, ok := data.(CaseResult)
-		if !ok || len(r.Cases) == 0 || r.Completed != len(r.Cases) {
+		if !ok || r.Completed < 1 {
 			return errors.New("invalid case projection")
 		}
 		delta = &c
+		encoded, err := json.Marshal(c)
+		if err != nil {
+			return err
+		}
+		if len(encoded) > MaxCaseResultBytes {
+			return errors.New("case result exceeds limit")
+		}
 		projection.Cases = nil
 	}
 	body, e := json.Marshal(&projection)
 	if e != nil {
 		return e
 	}
-	if len(body) > 64<<20 {
-		return errors.New("run exceeds 64 MiB")
-	}
-	pretty, e := json.MarshalIndent(&projection, "", "  ")
-	if e != nil {
-		return e
-	}
-	if len(pretty) > 64<<20 {
-		return errors.New("result exceeds 64 MiB")
-	}
-	if delta != nil {
-		b, err := json.MarshalIndent(delta, "    ", "  ")
-		if err != nil {
-			return err
-		}
-		if s.caseBytes[r.ID]+len(b)+len(pretty)+16 > 64<<20 {
-			return errors.New("result exceeds 64 MiB")
-		}
+	if len(body) > MaxMetadataBytes {
+		return errors.New("run metadata exceeds limit")
 	}
 	if eventType != "case.completed" {
 		ev.Run = body
@@ -134,8 +129,8 @@ func (s *Store) commit(r *Run, eventType string, data any) error {
 	if e != nil {
 		return e
 	}
-	if len(line)+1 > 64<<20 {
-		return errors.New("journal record exceeds 64 MiB")
+	if len(line)+1 > MaxMetadataBytes {
+		return errors.New("journal record exceeds limit")
 	}
 	write := s.appendRecord
 	if write == nil {
@@ -173,33 +168,14 @@ func (s *Store) Get(id string) (Run, error) {
 	if e != nil {
 		return r, e
 	}
-	rows, e := s.db.Query("SELECT body FROM run_cases WHERE run_id=? ORDER BY ordinal", id)
-	if e != nil {
-		return r, e
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var b []byte
-		var c CaseResult
-		if e = rows.Scan(&b); e != nil {
-			return r, e
-		}
-		if e = decodeJSON(b, &c); e != nil {
-			return r, e
-		}
-		r.Cases = append(r.Cases, c)
-	}
-	return r, rows.Err()
+	s.attachSources(&r)
+	return r, nil
 }
 
 // Separate case rows prevent rewriting all prior evidence on every completion.
 // The projection is transactional and entirely rebuildable from the journal.
 func (s *Store) project(r *Run, delta *CaseResult) error {
-	meta := *r
-	meta.Cases = nil
-	if r.Cases != nil {
-		meta.Cases = []CaseResult{}
-	}
+	meta := runMetadata(*r)
 	body, err := json.Marshal(meta)
 	if err != nil {
 		return err
@@ -212,37 +188,20 @@ func (s *Store) project(r *Run, delta *CaseResult) error {
 	if _, err = tx.Exec("INSERT INTO runs(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body", r.ID, body); err != nil {
 		return err
 	}
-	bytes := s.caseBytes[r.ID]
-	items := r.Cases
-	start := 0
+
 	if delta != nil {
-		items = []CaseResult{*delta}
-		start = len(r.Cases) - 1
-	} else {
-		if _, err = tx.Exec("DELETE FROM run_cases WHERE run_id=?", r.ID); err != nil {
-			return err
-		}
-		bytes = 0
-	}
-	for i, c := range items {
-		b, e := json.Marshal(c)
+		b, e := json.Marshal(delta)
 		if e != nil {
 			return e
 		}
-		if _, err = tx.Exec("INSERT INTO run_cases(run_id,ordinal,body) VALUES(?,?,?)", r.ID, start+i, b); err != nil {
-			return err
+		if len(b) > MaxCaseResultBytes {
+			return errors.New("case result exceeds limit")
 		}
-		pretty, e := json.MarshalIndent(c, "    ", "  ")
-		if e != nil {
+		if e = insertCase(tx, r.ID, r.Completed-1, *delta, b); e != nil {
 			return e
 		}
-		bytes += len(pretty) + 16
 	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	s.caseBytes[r.ID] = bytes
-	return nil
+	return tx.Commit()
 }
 
 // List returns run metadata without loading every historical CaseResult.
@@ -303,8 +262,14 @@ func (s *Store) rebuild() error {
 		var r Run
 		var offset int64
 		seq := 0
+		tx, e := s.db.Begin()
+		if e != nil {
+			f.Close()
+			return e
+		}
+		defer tx.Rollback()
 		for {
-			line, err := readJournalLine(reader, 64<<20)
+			line, err := readJournalLine(reader, MaxMetadataBytes)
 			if err == io.EOF {
 				break
 			}
@@ -312,7 +277,7 @@ func (s *Store) rebuild() error {
 				f.Close()
 				return err
 			}
-			if len(line) > 64<<20 {
+			if len(line) > MaxMetadataBytes {
 				f.Close()
 				return errors.New("journal record too large")
 			}
@@ -331,6 +296,10 @@ func (s *Store) rebuild() error {
 					f.Close()
 					return e
 				}
+				if r.SchemaVersion != Version || len(r.Cases) > 0 {
+					f.Close()
+					return errors.New("unsupported state format; remove old generated state")
+				}
 			} else if ev.Type == "case.completed" {
 				b, _ := json.Marshal(ev.Data)
 				var cr CaseResult
@@ -338,12 +307,18 @@ func (s *Store) rebuild() error {
 					f.Close()
 					return e
 				}
-				r.Cases = append(r.Cases, cr)
-				r.Completed = len(r.Cases)
+				if e = insertCase(tx, r.ID, r.Completed, cr, b); e != nil {
+					f.Close()
+					return e
+				}
+				r.Completed++
 			}
 			offset += int64(len(line))
 		}
 		f.Close()
+		if e = tx.Commit(); e != nil {
+			return e
+		}
 		stat, err := os.Stat(p)
 		if err != nil {
 			return err

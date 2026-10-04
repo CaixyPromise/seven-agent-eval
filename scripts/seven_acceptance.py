@@ -1,4 +1,5 @@
 """Controlled Seven SSE/Episode acceptance; real Seven credentials not used."""
+from bundle_fixture import read_fixture, assert_viewer_run
 import json
 import os
 import pathlib
@@ -29,7 +30,7 @@ def main():
             run_info = json.loads(result.stdout)
             assert result.returncode == 1 and run_info["status"] == "partial", result.stderr
             with zipfile.ZipFile(run_info["bundle"]) as archive:
-                run = json.loads(archive.read("run.json"))
+                run = read_fixture(archive)
             assert run["total"] == 4 and run["completed"] == 3
             assert Handler.sessions == 2 and len(Handler.calls) == 3
             assert Handler.calls[0]["path"] == Handler.calls[1]["path"] != Handler.calls[2]["path"]

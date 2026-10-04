@@ -116,9 +116,15 @@ func Discover(ctx context.Context, root string, worker Worker) (Discovery, error
 				id = filepath.Base(filepath.Dir(p))
 			}
 			a := Asset{Kind: kinds[dir], ID: id, Path: filepath.ToSlash(rel), Version: "0.1.0", Source: "local", Status: "valid", Descriptor: map[string]any{}}
-			b, err := ReadBounded(p, MaxFileBytes)
-			if err == nil {
-				a.Descriptor["digest"] = Hash(b)
+			var b []byte
+			var err error
+			if dir == "datasets" && name == "cases.jsonl" {
+				a.Descriptor["digest"], err = HashFile(p, MaxInputFileBytes)
+			} else {
+				b, err = ReadBounded(p, MaxFileBytes)
+				if err == nil {
+					a.Descriptor["digest"] = Hash(b)
+				}
 			}
 			switch {
 			case executableScript(p):

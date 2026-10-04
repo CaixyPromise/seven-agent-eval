@@ -52,27 +52,7 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 	if err != nil {
 		return Run{}, planError(err)
 	}
-	var cases []Case
-	var digest string
-	var revision *DatasetRevision
-	if effective.Plan.Source != "" {
-		var frozen DatasetRevision
-		cases, frozen, err = e.readSource(d, effective.Plan)
-		digest, revision = frozen.Digest, &frozen
-		if err == nil {
-			cases, err = expandEpisodes(cases)
-		}
-	} else {
-		cases, digest, err = e.readCases(d, effective.Plan)
-	}
-	if err != nil {
-		return Run{}, planError(err)
-	}
 	var catalogs map[string]any
-	work, comparison, err := workCases(cases, effective.Plan)
-	if err != nil {
-		return Run{}, planError(err)
-	}
 	c, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err = e.Worker.Call(c, "catalogs", map[string]any{}, &catalogs); err != nil {
@@ -100,13 +80,11 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 		}
 	}
 	r := Run{SchemaVersion: Version, ID: NewID(), Package: d.Package, CreatedAt: time.Now().UTC(), Status: "running",
-		Total: len(work), Comparison: comparison, Effective: effective, DatasetDigest: digest, Cases: []CaseResult{}, Outputs: []ProcessorOutput{},
+		Effective: effective, Cases: []CaseResult{}, Outputs: []ProcessorOutput{},
 		Conclusions: []Conclusion{}, Catalogs: catalogs}
-	for _, c := range cases {
-		if id, ok := c.Metadata["episode_id"].(string); ok {
-			index := episodeIndex(&r, id)
-			r.Episodes[index].CaseIDs = append(r.Episodes[index].CaseIDs, c.ID)
-		}
+	excluded, err := e.prepareInput(ctx, d, &r)
+	if err != nil {
+		return Run{}, planError(err)
 	}
 	if len(r.Episodes) > 0 && effective.Plan.Mode == "invoke" {
 		target, lookupErr := Lookup(d, effective.Plan.Subject, "adapter")
@@ -121,11 +99,7 @@ func (e *Engine) Prepare(ctx context.Context, planID string) (Run, error) {
 			return Run{}, planError(errors.New("Episode requires session-capable subject"))
 		}
 	}
-	r.DatasetRevision = revision
-	if err = e.preflightParameters(&r, work); err != nil {
-		return Run{}, planError(err)
-	}
-	if err = e.snapshot(&r); err != nil {
+	if err = e.snapshot(&r, excluded); err != nil {
 		return Run{}, err
 	}
 	if err = e.freezeNode(ctx, &r); err != nil {
@@ -260,16 +234,15 @@ func (e *Engine) EvaluateExisting(ctx context.Context, r *Run, c Case, result Su
 // window has exactly the same processor/conclusion semantics as its export.
 func (e *Engine) ProcessExisting(ctx context.Context, r *Run) error {
 	r.Outputs, r.Conclusions = []ProcessorOutput{}, []Conclusion{}
-	inputDigest := Digest(r.Cases)
+	inputDigest, digestErr := r.CaseDigest()
+	if digestErr != nil {
+		return digestErr
+	}
 	if r.Scope != nil {
-		inputDigest = Digest(map[string]any{"cases": r.Cases, "start": r.Scope.Start, "end": r.Scope.End, "facts": r.Scope.Facts, "backlog_facts": r.Scope.BacklogFacts})
+		inputDigest = Digest(map[string]any{"case_digest": inputDigest, "start": r.Scope.Start, "end": r.Scope.End, "facts": r.Scope.Facts, "backlog_facts": r.Scope.BacklogFacts})
 	}
 	for _, ref := range r.Effective.Processors {
-		var output ProcessorOutput
-		err := e.extension(ctx, r, ref, "processor", "processor/process", map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "window": r.Scope, "comparison": r.Comparison, "candidates": r.Effective.Plan.Candidates}, &output)
-		if err == nil {
-			err = validateProcessorOutput(output)
-		}
+		output, err := e.reduce(ctx, r, ref, inputDigest)
 		if err != nil {
 			r.Message = "Processor failed; no fallback statistics were substituted"
 			r.Status = "partial"
@@ -280,7 +253,7 @@ func (e *Engine) ProcessExisting(ctx context.Context, r *Run) error {
 	}
 	for _, ref := range r.Effective.Conclusions {
 		var conclusions []Conclusion
-		err := e.extension(ctx, r, ref, "conclusion", "conclusion/conclude", map[string]any{"outputs": r.Outputs, "cases": r.Cases}, &conclusions)
+		err := e.extension(ctx, r, ref, "conclusion", "conclusion/conclude", map[string]any{"outputs": r.Outputs, "total": r.Total, "completed": r.Completed}, &conclusions)
 		if err == nil {
 			for _, c := range conclusions {
 				if err = protocol.Validate("conclusion", c); err != nil {
@@ -316,82 +289,6 @@ func catalogContains(value any, id string) bool {
 		}
 	}
 	return false
-}
-func (e *Engine) readCases(d Discovery, p Plan) ([]Case, string, error) {
-	cases, digest, err := e.readInputCases(d, p)
-	if err != nil {
-		return nil, "", err
-	}
-	expanded, err := expandEpisodes(cases)
-	return expanded, digest, err
-}
-func (e *Engine) readInputCases(d Discovery, p Plan) ([]Case, string, error) {
-	if p.Source != "" {
-		cases, revision, err := e.readSource(d, p)
-		return cases, revision.Digest, err
-	}
-	a, err := Lookup(d, p.Dataset, "dataset")
-	if err != nil {
-		return nil, "", err
-	}
-	rel := a.Path
-	if filepath.Base(rel) == "dataset.yaml" {
-		source, _ := a.Descriptor["source"].(string)
-		rel = filepath.Join(filepath.Dir(rel), source)
-	}
-	path, err := SafePath(e.Root, rel)
-	if err != nil {
-		return nil, "", err
-	}
-	b, err := ReadBounded(path, MaxFileBytes)
-	if err != nil {
-		return nil, "", err
-	}
-	scanner := bufio.NewScanner(bytes.NewReader(b))
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	cases := []Case{}
-	seen := map[string]bool{}
-	line := 0
-	for scanner.Scan() {
-		line++
-		if len(bytes.TrimSpace(scanner.Bytes())) == 0 {
-			continue
-		}
-		var raw map[string]any
-		if err = decodeJSON(scanner.Bytes(), &raw); err != nil {
-			return nil, "", fmt.Errorf("dataset line %d: invalid JSON", line)
-		}
-		if err = protocol.Validate("case", raw); err != nil {
-			return nil, "", fmt.Errorf("dataset line %d: %w", line, err)
-		}
-		if err = validateCaseReferences(raw); err != nil {
-			return nil, "", fmt.Errorf("dataset line %d: %w", line, err)
-		}
-		if p.Mode == "replay" {
-			if err = validateReplayInput(raw); err != nil {
-				return nil, "", fmt.Errorf("dataset line %d: %w", line, err)
-			}
-		}
-		var c Case
-		if err = decodeJSON(scanner.Bytes(), &c); err != nil {
-			return nil, "", err
-		}
-		if seen[c.ID] {
-			return nil, "", fmt.Errorf("duplicate case id on line %d", line)
-		}
-		seen[c.ID] = true
-		cases = append(cases, c)
-		if len(cases) > MaxCases {
-			return nil, "", errors.New("phase 1 limit: 1000 cases")
-		}
-	}
-	if err = scanner.Err(); err != nil {
-		return nil, "", err
-	}
-	if len(cases) == 0 {
-		return nil, "", errors.New("empty dataset")
-	}
-	return cases, Hash(b), nil
 }
 func (e *Engine) asset(r *Run, reference, kind string) (Asset, error) {
 	d := Discovery{Assets: r.Effective.Assets}
@@ -438,6 +335,9 @@ func (e *Engine) extension(ctx context.Context, r *Run, ref, kind, method string
 	return e.workerFor(r).Call(c, method, params, out)
 }
 func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
+	r.Cases = nil
+	e.Store.attachSources(&r)
+	failedCases := false
 	// Execution reads only its frozen package/SDK copy, including helper modules.
 	if len(r.Effective.Files) > 0 {
 		copyEngine := *e
@@ -445,22 +345,22 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 		copyEngine.Worker.Source = filepath.Join(e.Store.Root, "runs", r.ID, "runtime")
 		e = &copyEngine
 	}
-	d := Discovery{Package: r.Package, Assets: r.Effective.Assets}
-	cases, digest, err := e.readCases(d, r.Effective.Plan)
-	if err != nil || digest != r.DatasetDigest {
-		r.Status = "failed"
-		r.Message = "Dataset changed or unavailable after preparation"
-		save := e.Store.Commit(&r, "run.finished", nil)
-		if save != nil {
+	input, err := e.openPreparedInput(ctx, r)
+	if err != nil {
+		r.Status, r.Message = "failed", "Prepared input missing or corrupt; no business calls started"
+		if save := e.Store.Commit(&r, "run.finished", nil); save != nil {
 			return r, save
 		}
-		return r, errors.New(r.Message)
+		return r, err
 	}
-	cases, comparison, err := workCases(cases, r.Effective.Plan)
-	if err != nil || Digest(comparison) != Digest(r.Comparison) {
-		return r, errors.New("comparison input changed after preparation")
-	}
-	for _, c := range cases {
+	defer input.Close()
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 4096), inputRecordBytes)
+	for scanner.Scan() {
+		var c Case
+		if err := decodeJSON(scanner.Bytes(), &c); err != nil {
+			return r, err
+		}
 		if ctx.Err() != nil {
 			break
 		}
@@ -554,7 +454,9 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 			_ = decodeJSON(b, &cr)
 		}
 		cr.RedactionApplied = before != Digest(cr)
-		r.Cases = append(r.Cases, cr)
+		if cr.Status != "completed" {
+			failedCases = true
+		}
 		if episodeID != "" {
 			index := episodeIndex(&r, episodeID)
 			r.Episodes[index].Completed++
@@ -562,10 +464,13 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 				r.Episodes[index].Status = "partial"
 			}
 		}
-		r.Completed = len(r.Cases)
+		r.Completed++
 		if err = e.Store.Commit(&r, "case.completed", cr); err != nil {
 			return r, err
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return r, err
 	}
 	cancelled := ctx.Err() != nil
 	for i := range r.Episodes {
@@ -588,57 +493,16 @@ func (e *Engine) Execute(ctx context.Context, r Run) (Run, error) {
 		finalCtx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 	}
 	defer func() { cancel() }()
-	ensureGrace := func() {
-		if !cancelled && ctx.Err() != nil {
-			cancelled = true
-			finalCtx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-		}
-	}
-	inputDigest := Digest(r.Cases)
-	for _, ref := range r.Effective.Processors {
-		ensureGrace()
-		var output ProcessorOutput
-		input := map[string]any{"cases": r.Cases, "total": r.Total, "input_digest": inputDigest, "episodes": r.Episodes, "comparison": r.Comparison, "candidates": r.Effective.Plan.Candidates}
-		er := e.extension(finalCtx, &r, ref, "processor", "processor/process", input, &output)
-		if er == nil {
-			er = validateProcessorOutput(output)
-		}
-		if er != nil {
-			r.Message = "Processor failed; no fallback statistics were substituted"
-			r.Status = "partial"
-			continue
-		}
-		output.InputDigest = inputDigest
-		r.Outputs = append(r.Outputs, output)
-	}
-	for _, ref := range r.Effective.Conclusions {
-		ensureGrace()
-		var conclusions []Conclusion
-		er := e.extension(finalCtx, &r, ref, "conclusion", "conclusion/conclude", map[string]any{"outputs": r.Outputs, "cases": r.Cases}, &conclusions)
-		if er == nil {
-			for _, c := range conclusions {
-				if er = protocol.Validate("conclusion", c); er != nil {
-					break
-				}
-			}
-		}
-		if er != nil {
-			r.Message = "Conclusion failed; see available facts"
-			r.Status = "partial"
-			continue
-		}
-		r.Conclusions = append(r.Conclusions, conclusions...)
+	if err := e.ProcessExisting(finalCtx, &r); err != nil {
+		return r, err
 	}
 	if cancelled || ctx.Err() != nil {
 		r.Status = "cancelled"
 		r.Message = "Cancelled; completed cases retained, remaining cases not scored"
 	} else if r.Status != "partial" {
 		r.Status = "completed"
-		for _, c := range r.Cases {
-			if c.Status != "completed" {
-				r.Status = "partial"
-				break
-			}
+		if failedCases {
+			r.Status = "partial"
 		}
 	}
 	if r.Completed < r.Total && r.Status == "completed" {

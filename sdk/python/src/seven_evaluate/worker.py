@@ -6,7 +6,7 @@ import inspect
 import json
 import pathlib
 import sys
-from . import basic, rag, judge, agent
+from . import basic, rag, judge, agent, reducer
 
 def load(path):
     path = pathlib.Path(path).resolve()
@@ -29,8 +29,8 @@ def call(fn, ctx):
 
 def dispatch(method, params):
     if method == "initialize":
-        return {"protocol_version": "1.0", "capabilities": ["describe", "subject/create", "subject/cleanup", "subject/invoke", "evaluator/evaluate",
-                                                          "processor/process", "conclusion/conclude"]}
+        return {"protocol_version": "2.0", "capabilities": ["describe", "subject/create", "subject/cleanup", "subject/invoke", "evaluator/evaluate",
+                                                          "processor/reduce", "conclusion/conclude"]}
     if method == "catalogs":
         return {**basic.CATALOG, "metrics":basic.CATALOG["metrics"] + [{"id":mid,"name":mid,"type":"number" if mid.startswith(("rag.","judge.")) or mid=="tool.repeated" else "boolean"} for mid in rag.METRICS+agent.METRICS+["rag.faithfulness","judge.latency.ms","judge.usage.tokens","judge.usage.cost"]],
                 "conclusions":basic.CATALOG["conclusions"] + [{"id":"comparison_checked","description":"同数据候选配置的配对比较；不代表通用业务通过或唯一最优"}],
@@ -59,7 +59,7 @@ def dispatch(method, params):
             if hook is None: raise ValueError("session lifecycle unavailable")
             return call(hook,ctx)
         return call(fn, ctx)
-    functions = {"evaluator/evaluate": basic.evaluate, "processor/process": basic.process,
+    functions = {"evaluator/evaluate": basic.evaluate, "processor/reduce": reducer.reduce,
                  "conclusion/conclude": basic.conclude}
     if method not in functions:
         raise ValueError("unsupported method")

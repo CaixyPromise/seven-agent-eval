@@ -1,9 +1,13 @@
 from seven_evaluate import processor
 
-@processor(id="python-summary", version="1.0.0")
+@processor(id="python-summary", version="2.0.0")
 def summarize(ctx):
-    scored = sum(any(m["status"] == "observed" for m in c["metrics"]) for c in ctx["cases"])
-    anomalies = sum(c["status"] != "completed" or any(m["status"] == "error" or (m["status"] == "observed" and m["value"] is False) for m in c["metrics"]) for c in ctx["cases"])
-    return {"processor":"python-summary@1.0.0", "input_digest":ctx["input_digest"],
-            "data":{"scored_count":scored,"coverage_ratio":scored / ctx["total"] if ctx["total"] else None,"anomaly_count":anomalies},
+    if ctx["phase"] == "initialize":
+        return {"scored_count":0,"anomaly_count":0}
+    if ctx["phase"] == "update":
+        scored = sum(any(m["status"] == "observed" for m in c["metrics"]) for c in ctx["cases"])
+        anomalies = sum(c["status"] != "completed" or any(m["status"] == "error" or (m["status"] == "observed" and m["value"] is False) for m in c["metrics"]) for c in ctx["cases"])
+        return {"scored_count":ctx["state"]["scored_count"]+scored,"anomaly_count":ctx["state"]["anomaly_count"]+anomalies}
+    return {"processor":"python-summary@2.0.0","input_digest":ctx["input_digest"],
+            "data":{**ctx["state"],"coverage_ratio":ctx["state"]["scored_count"]/ctx["total"] if ctx["total"] else None},
             "report":{"version":"1","kpis":{"scored":"/scored_count","coverage":"/coverage_ratio","anomalies":"/anomaly_count"}}}

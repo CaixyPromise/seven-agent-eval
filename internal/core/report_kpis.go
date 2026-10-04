@@ -119,7 +119,7 @@ func validateProcessorOutput(output ProcessorOutput) error {
 	return err
 }
 
-// ResolveReportKPIs selects a declared provider, preserving legacy 1.0 reports.
+// ResolveReportKPIs uses only explicitly declared providers.
 func ResolveReportKPIs(outputs []ProcessorOutput) ReportKPIs {
 	var providers []ProcessorOutput
 	for _, o := range outputs {
@@ -133,18 +133,6 @@ func ResolveReportKPIs(outputs []ProcessorOutput) ReportKPIs {
 	if len(providers) == 1 {
 		r, _ := mappedKPIs(providers[0])
 		return r
-	}
-	for _, o := range outputs {
-		if o.Processor == "builtin.basic-summary@1" {
-			r := ReportKPIs{}
-			r.Scored, _ = reportNumber(o.Data["scored"], "scored")
-			r.Coverage, _ = reportNumber(o.Data["coverage"], "coverage")
-			if ids, ok := o.Data["failure_ids"].([]any); ok {
-				n := float64(len(ids))
-				r.Anomalies = &n
-			}
-			return r
-		}
 	}
 	return ReportKPIs{}
 }

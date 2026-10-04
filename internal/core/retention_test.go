@@ -97,7 +97,7 @@ func TestRetentionReceiptsExportAndRecovery(t *testing.T) {
 			t.Fatal("payload retained or re-executed")
 		}
 	}
-	imported, err := ImportFile(bundle)
+	imported, err := importFixture(t, bundle)
 	if err != nil || Digest(imported) != Digest(window) {
 		t.Fatal("portable archive changed", err)
 	}
@@ -177,10 +177,10 @@ func TestRetentionOfflineReferenceProtection(t *testing.T) {
 	if _, err = m.ApplyRetention(context.Background(), p.Digest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Get("delete"); !errors.Is(err, ErrDataExpired) {
+	if _, err = getFixture(t, s, "delete"); !errors.Is(err, ErrDataExpired) {
 		t.Fatal("missing expiration", err)
 	}
-	if _, err = s.Get("old"); err != nil {
+	if _, err = getFixture(t, s, "old"); err != nil {
 		t.Fatal("dependency removed", err)
 	}
 	if err = s.Commit(&independent, "run.started", nil); !errors.Is(err, ErrDataExpired) {

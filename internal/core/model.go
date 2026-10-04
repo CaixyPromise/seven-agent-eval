@@ -5,8 +5,12 @@ import (
 	"time"
 )
 
-const Version = "1.0"
-const MaxCases = 1000
+const Version = "2.0"
+const MaxCases = 10000
+const MaxInputFileBytes = 1 << 30
+const MaxCaseResultBytes = 4 << 20
+const MaxMetadataBytes = 8 << 20
+const CaseBatchSize = 32
 const MaxFileBytes = 32 << 20
 const MaxLiveEventBytes = 1 << 20
 const MaxLiveBatch = 100
@@ -103,7 +107,7 @@ type Case struct {
 	ID         string         `json:"id"`
 	Inputs     any            `json:"inputs"`
 	References map[string]any `json:"references,omitempty"`
-	Response   any            `json:"response,omitempty"`
+	Response   any            `json:"response"`
 	Contexts   []any          `json:"contexts,omitempty"`
 	Result     *SubjectResult `json:"result,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
@@ -202,18 +206,20 @@ type Conclusion struct {
 	Summary string `json:"summary"`
 }
 type Run struct {
-	Comparison      *Comparison       `json:"comparison,omitempty"`
-	SchemaVersion   string            `json:"schema_version"`
-	ID              string            `json:"id"`
-	Package         Package           `json:"package"`
-	CreatedAt       time.Time         `json:"created_at"`
-	Status          string            `json:"status"`
-	Message         string            `json:"message,omitempty"`
-	Total           int               `json:"total"`
-	Completed       int               `json:"completed"`
-	Effective       Effective         `json:"effective"`
-	DatasetDigest   string            `json:"dataset_digest"`
-	Cases           []CaseResult      `json:"cases"`
+	Comparison      *Comparison  `json:"comparison,omitempty"`
+	SchemaVersion   string       `json:"schema_version"`
+	ID              string       `json:"id"`
+	Package         Package      `json:"package"`
+	CreatedAt       time.Time    `json:"created_at"`
+	Status          string       `json:"status"`
+	Message         string       `json:"message,omitempty"`
+	Total           int          `json:"total"`
+	Completed       int          `json:"completed"`
+	Effective       Effective    `json:"effective"`
+	DatasetDigest   string       `json:"dataset_digest"`
+	Cases           []CaseResult `json:"cases,omitempty"` // Transient window/batch data; never persisted in Run metadata.
+	caseSource      func(func(CaseResult) error) error
+	inputSource     func(func(Case) error) error
 	Outputs         []ProcessorOutput `json:"outputs"`
 	Conclusions     []Conclusion      `json:"conclusions"`
 	Catalogs        map[string]any    `json:"catalogs"`

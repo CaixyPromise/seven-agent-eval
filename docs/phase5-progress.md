@@ -1,6 +1,72 @@
 # 第五阶段进度：T12
 
-基线：`00fb166`，分支 `codex/agent-rag-phase3`。2026-10-05 开始；当前状态：**首轮容量、故障恢复、显式清理闭环已通过自动验收；T12 原万级/百万指标及长期有界运行目标尚未收口**。一条工作线；T13、T14、剩余格式和参数搜索不在本轮实施范围。
+分支：`codex/agent-rag-phase3`。本轮从 `f204ca2` 继续，日期 2026-10-05（Asia/Singapore）。**本轮约定的离线大规模硬切闭环已完成：输入校验 → 执行 → 分批聚合 → 分页报告 → 分块包 → 无运行时重开，10,000 Case / 1,000,000 Observation 实测通过。** 不保留旧接口、旧状态或 1.0 包兼容层。T13/T14 与在线长期容量 SLA 不因此自动通过。
+
+## 本轮交付
+
+- 输入在 Subject 调用前全部校验并冻结；SQLite 检查重复/关联/展开身份，JSONL/CSV 顺序读取，BEIR/TREC 磁盘关联。冻结摘要损坏在调用前拒绝。
+- Run 元数据不含全体 CaseResult；逐 Case journal + SQLite 投影，可重建；报告分页摘要与单案例详情分离，Episode/比较下钻同步改用分页。
+- Python/Node 统一 `processor/reduce` 三阶段，批次最多 32 Case/8 MiB；内置统计 SQLite 精确聚合，不近似或截断分母；Conclusion 接收统计与计数。
+- 协议/worker/结果包硬切 2.0；旧包明确拒绝。ZIP 输入/结果分块 16 MiB，单记录、元数据、条目数和累计 4 GiB 各自限制；HTML 为独立汇总，完整样本由查看器分页。
+- 页面沿用 Ant Design，原生浏览器下载避免整包 Blob；单次下载领取后删除，最多 4 个待领取，10 分钟过期，正常停服清理。
+- 导入保留未执行输入；后续读分块重新核对摘要；同 Run 导入串行检查；失败留下 partial，不伪装完整成功。
+- 详细公共契约及支持上限：`docs/bounded-evaluation.md`。自定义处理器是可信代码，不承诺其任意实现的内存上限。
+
+## 百万指标实测与删除确认
+
+命令：`uv run --project sdk/python python scripts/large_acceptance.py`，退出 0。真实 Node Evaluator 每 Case 100 指标，Python 内置磁盘 Processor；不是预先生成统计文件。
+
+| 项目 | 本轮实测 |
+|---|---:|
+| Case / Observation | 10,000 / 1,000,000 |
+| run 命令（含默认导出） | 1,298.18 秒 |
+| 整体验收（含 verify/独立导入查询） | 1,644.452 秒 |
+| time -l maximum resident set size | 104,513,536 B，约 99.7 MiB |
+| ZIP / 累计解压 | 6,275,122 / 126,862,091 B |
+| Run 元数据 / 第一页摘要 | 48,033 / 3,333 B |
+| 精确统计 | 100 个指标均值/中位数 49.5、p95 94，全部核对 |
+| 无 Node/Python 独立查看器 | 元数据、首尾分页/完整详情、HTML 摘要通过 |
+| 大数据清理 | PASS；finally 清理后再次检查专属临时目录不存在 |
+
+资源数值来自 CLI 的 `time -l`，不是所有同时运行子进程 RSS 总和，不外推生产 SLA。执行二进制 SHA256：`eeb65997a94a305436e43c3750d720282b76fb793eb6489117691db31bed951c`；测量期间后续修改为报告安全文案、下载/导入防护与额外边界测试，最终二进制另跑同链路小规模回归，不冒称百万负载重新跑过。
+
+测量仅保留 `artifacts/phase5-large/acceptance-10000.json`。本轮百万输入、SQLite、journal、代码快照、结果包已删除；结果包摘要 `bc49adc717d86a6de8ff6715ad1fb1f49ca5f6dd9167b0e6aec9853ac1f6f739` 可对账。脚本成功/失败/SIGTERM 都清理所属临时目录，SIGKILL/断电不属于 finally 保证。
+
+另外按 manifest 实际版本精确删除了本仓库 artifacts 下 30 个旧 1.0 生成包（其中一份原为 Git 跟踪文件，本次提交记录删除）；没有删除源数据或扩展代码。浏览器 fixture 与无运行时查看器的专属临时数据在精确停止所属进程后删除。百万测试和最终 100 Case 回归的 `large_data_removed` 均为 true；没有留下百万包副本。
+
+## 本轮验证记录
+
+- 最终 `make test` 退出 0：Go race（core 211.639s / server 18.400s）、TS SDK 5 项、前端 11 项、Python 28 项及 TypeScript/Vite 构建。包含 Processor 预算与 CSV 多行字段上限测试。随后增加的并发重复导入测试与已有下载领取/停服清理测试单独 `go test -race ... -count=1` 通过（core 3.769s / server 5.658s）；无额外产品代码变更。
+- `go vet ./...`、`make build`、`git diff --check` 均退出 0；Vite >500 KiB chunk 警告保留为非阻断风险。
+- 离线 acceptance、TS/Python、T10 comparison、HTTP RAG、Seven SSE、live acceptance 均在新协议下退出 0；Seven 仍为受控环境，非真实生产。
+- 新增 V2 真实累计 >64 MiB 分块测试、取消时未执行输入导入/再导出、校验后源包替换拒绝、元数据无全体 Cases、单次下载及正常停服删除测试。
+- 新格式恢复/清理集成：`uv run --project sdk/python python scripts/resilience_acceptance.py --cases 3 --seconds 2 --output artifacts/phase5-hardcut-resilience`，退出 0；64 积压恢复 27.722 秒，66 received、pending=0，清理 66 记录/3 Run。此为格式切换集成检查；前 checkpoint 的千例/60 秒记录保留为历史，不冒充本轮重跑。
+- 小型可打开新包：`artifacts/phase5-hardcut-resilience/window.seven.eval` 与 `report.html`；百万包按用户要求不保留。
+- 最终二进制同链路复测：100 Case / 10,000 Observation，run 23.822 秒、全链路 27.569 秒、maximum RSS 43,614,208 B，精确统计与独立查看器通过并清理，退出 0；二进制摘要 `e5890c8f13c5ef908e916684d21e1c01a74b94c010cb529ad45f80fef7c0f733`。随后 `python3 scripts/acceptance.py`、窗口包 verify、`go vet ./...`、`git diff --check` 均退出 0。
+
+## 本轮真实页面复核
+
+独立 Playwright 会话 `t12-bounded`，真实 Go 服务与 Vite 产物；65 Case、长 ID、7 异常。实际完成：25 条分页→第三页→第 65 个完整详情、异常筛选、Escape 关闭、下载 .seven.eval、CLI verify、无 Node/Python 查看器页面重开及最后一例证据。
+
+- 原服务端口 63270，独立查看器 60949，均为本轮临时隔离实例。
+- 本轮窄屏明确 override 390×844 / DPR 1；最终桌面 override 1536×1024。最初独立查看器截图采用浏览器原生 DPR 2，不作为 DPR 1 原型对照。
+- 受控详情 500 含模拟敏感文本；页面未出现原始异常，局部重试后可读实际证据。修正详情错误不再误说“报告读取失败”。
+- 截图在 `output/playwright/t12-bounded/`：`drawer-desktop.png`、`anomalies-desktop.png`、`samples-mobile.png`、`independent-viewer.png`、`detail-error-final.png`。
+- 本轮是分页与详情/下载局部验收，不声称重做全产品 200% 缩放、reduced-motion 或全量原型对照。
+- 原型/React 技能在本轮用于复用已有 Ant Design 布局、拆分分页/异步详情组件、检查安全文案与取消请求；没有额外创造图表协议或整页视觉重构。
+- 浏览器安全错误截图等待 CSS 过渡结束后重拍；`detail-mobile.png` 实际显示 390×844 长 ID、完整回答和指标，关闭操作可达。局部重试首次自动脚本等待了不存在的标题而超时，重新按真实“逐项指标”标题确认成功，未把脚本超时隐瞒为首次全通过。两个预期 500 留在浏览器控制台；无上游敏感标记进入正文。
+
+| Before | After | Why |
+|---|---|---|
+| 页面依赖完整 Run.cases，全部样本常驻 | 分页摘要；打开后才读单条完整证据 | 百万指标不进入初始页面内存 |
+| Episode/候选直接索引全数组 | 按 Episode/原始 Case 身份查询 | 分页后仍有跨 Turn/配置的访问路径 |
+| 导出 fetch Blob 持有全包 | 单次原生下载；领取/停服清理 | 避免浏览器整包缓冲与临时包滞留 |
+| 详情局部失败沿用报告文案 | 详情专用安全文案与就地重试 | 背景统计仍有效，不暗示整个报告失败 |
+| 旧整份 Run Processor / 1.0 包 | reduce ABI / 2.0 分块包 | 按用户要求硬切，不保留兼容分支 |
+
+## 历史记录（f204ca2 及输入切换中间态）
+
+以下为前一 checkpoint 的测量、恢复与清理策略。出现的“当前”“尚未支持万级”等表述只描述该历史时间点，不能覆盖上面的新格式与本轮通过结果。
 
 ## 测试机器与冻结测量口径
 

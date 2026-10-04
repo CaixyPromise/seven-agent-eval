@@ -102,33 +102,6 @@ func mapRequest(template, input any, parameters map[string]any) (any, error) {
 	return mapValue(template, input)
 }
 
-func workCases(cases []Case, p Plan) ([]Case, *Comparison, error) {
-	if len(p.Candidates) == 0 {
-		return cases, nil, nil
-	}
-	if len(cases)*len(p.Candidates) > MaxCases {
-		return nil, nil, errors.New("comparison exceeds 1000 total invocations")
-	}
-	comparison := &Comparison{BaselineID: p.Candidates[0].ID, InputDigest: Digest(cases), CaseIDs: []string{}}
-	for _, c := range cases {
-		if c.Metadata["episode_id"] != nil {
-			return nil, nil, errors.New("comparison does not support shared episode environments")
-		}
-		comparison.CaseIDs = append(comparison.CaseIDs, c.ID)
-	}
-	out := make([]Case, 0, len(cases)*len(p.Candidates))
-	for _, candidate := range p.Candidates {
-		for _, c := range cases {
-			c.Metadata = cloneMap(c.Metadata)
-			c.Metadata["seven_eval_candidate"] = candidate.ID
-			c.Metadata["seven_eval_case_id"] = c.ID
-			c.ID = candidate.ID + "/" + c.ID
-			out = append(out, c)
-		}
-	}
-	return out, comparison, nil
-}
-
 func cloneMap(value map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range value {
