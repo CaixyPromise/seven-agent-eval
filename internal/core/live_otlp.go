@@ -11,14 +11,16 @@ import (
 // Persist the assembled span set, including both clocks, before acknowledging
 // transport. Late spans advance revision and never repeat a production request.
 type otlpAssembly struct {
-	ExpiredSpans map[string]string `json:"expired_spans,omitempty"`
-	Key          string            `json:"key"`
-	PlanID       string            `json:"plan_id"`
-	Resource     []otlpAttr        `json:"resource"`
-	Spans        []otlpSpan        `json:"spans"`
-	FirstAt      time.Time         `json:"first_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
-	Revision     int               `json:"revision"`
+	ContentDigest string            `json:"content_digest,omitempty"`
+	DueAt         time.Time         `json:"due_at"`
+	ExpiredSpans  map[string]string `json:"expired_spans,omitempty"`
+	Key           string            `json:"key"`
+	PlanID        string            `json:"plan_id"`
+	Resource      []otlpAttr        `json:"resource"`
+	Spans         []otlpSpan        `json:"spans"`
+	FirstAt       time.Time         `json:"first_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+	Revision      int               `json:"revision"`
 }
 
 func (m *LiveManager) IngestOTLP(ctx context.Context, body []byte) (IngestResult, error) {
@@ -63,7 +65,11 @@ func (m *LiveManager) IngestOTLP(ctx context.Context, body []byte) (IngestResult
 			}
 			key := Digest([]string{id, resource["service.name"], resource["seven.eval.project"], trace, resource["seven.eval.turn.id"]})
 			m.mu.Lock()
-			assembly, exists := m.assemblies[key]
+			assembly, exists, lookupErr := m.assemblyLocked(key)
+			if lookupErr != nil {
+				m.mu.Unlock()
+				return result, lookupErr
+			}
 			if assembly.ExpiredSpans != nil {
 				code := ""
 				for _, span := range incoming {
@@ -89,8 +95,13 @@ func (m *LiveManager) IngestOTLP(ctx context.Context, body []byte) (IngestResult
 			}
 			expired := false
 			for _, span := range incoming {
-				if span.EndTimeUnixNano > 0 && m.expiredEventLocked(id, time.Unix(0, int64(span.EndTimeUnixNano))) {
-					expired = true
+				if span.EndTimeUnixNano > 0 {
+					gone, lookupErr := m.expiredEventLocked(id, time.Unix(0, int64(span.EndTimeUnixNano)))
+					if lookupErr != nil {
+						m.mu.Unlock()
+						return result, lookupErr
+					}
+					expired = expired || gone
 				}
 			}
 			if expired {
@@ -101,10 +112,9 @@ func (m *LiveManager) IngestOTLP(ctx context.Context, body []byte) (IngestResult
 			}
 			if !exists {
 				pending := 0
-				for _, a := range m.assemblies {
-					if a.PlanID == id && !m.assemblyEmittedLocked(a) {
-						pending++
-					}
+				if err = m.db.QueryRow("SELECT count(*) FROM live_assemblies WHERE plan=? AND emitted=0", id).Scan(&pending); err != nil {
+					m.mu.Unlock()
+					return result, err
 				}
 				if pending >= plan.Effective.Plan.Stream.MaxPending {
 					m.mu.Unlock()
@@ -151,6 +161,21 @@ func (m *LiveManager) IngestOTLP(ctx context.Context, body []byte) (IngestResult
 			sort.Slice(assembly.Spans, func(i, j int) bool { return assembly.Spans[i].SpanID < assembly.Spans[j].SpanID })
 			assembly.UpdatedAt = time.Now().UTC()
 			assembly.Revision++
+			assembly.ContentDigest = Digest(assembly.Spans)
+			assembly.DueAt = assembly.FirstAt.Add(time.Duration(plan.Effective.Plan.Stream.EvidenceTimeoutSeconds) * time.Second)
+			probe := otlpResourceSpan{}
+			probe.Resource.Attributes = assembly.Resource
+			probe.ScopeSpans = append(probe.ScopeSpans, struct {
+				Spans []otlpSpan `json:"spans"`
+			}{Spans: assembly.Spans})
+			probeBody, _ := json.Marshal(otlpRequest{ResourceSpans: []otlpResourceSpan{probe}})
+			mapped, mapErr := MapOTLPJSON(probeBody)
+			if mapErr == nil && len(mapped.Events) > 0 && mapped.Events[0].Result.Response != nil && mapped.Events[0].Result.Response != "" {
+				quiet := assembly.UpdatedAt.Add(time.Duration(plan.Effective.Plan.Stream.QuietSeconds) * time.Second)
+				if quiet.Before(assembly.DueAt) {
+					assembly.DueAt = quiet
+				}
+			}
 			encoded, _ := json.Marshal(assembly)
 			if len(encoded) > MaxLiveEventBytes {
 				m.mu.Unlock()
@@ -160,7 +185,6 @@ func (m *LiveManager) IngestOTLP(ctx context.Context, body []byte) (IngestResult
 			}
 			err = m.appendLocked(liveJournal{Type: "otlp.updated", PlanID: id, Assembly: &assembly})
 			if err == nil {
-				m.assemblies[key] = assembly
 				result.Accepted++
 				result.Items = append(result.Items, IngestItem{EventID: trace, Status: "accepted"})
 			}
@@ -176,14 +200,37 @@ func (m *LiveManager) IngestOTLP(ctx context.Context, body []byte) (IngestResult
 
 func (m *LiveManager) flushOTLP(ctx context.Context) {
 	m.mu.Lock()
+	if m.ensureProjectionLocked() != nil {
+		m.mu.Unlock()
+		return
+	}
+	rows, err := m.db.Query("SELECT key FROM live_assemblies WHERE emitted=0 AND due_ns<=? ORDER BY due_ns,key LIMIT ?", time.Now().UnixNano(), LiveReadBatch)
+	if err != nil {
+		m.mu.Unlock()
+		return
+	}
+	keys := []string{}
+	for rows.Next() {
+		var key string
+		if rows.Scan(&key) == nil {
+			keys = append(keys, key)
+		}
+	}
+	rows.Close()
 	assemblies := []otlpAssembly{}
-	for _, a := range m.assemblies {
-		if !m.assemblyEmittedLocked(a) {
+	bytes := 0
+	for _, key := range keys {
+		a, _, err := m.assemblyLocked(key)
+		if err == nil {
+			b, _ := json.Marshal(a)
+			if bytes+len(b) > MaxMetadataBytes {
+				break
+			}
+			bytes += len(b)
 			assemblies = append(assemblies, a)
 		}
 	}
 	m.mu.Unlock()
-	sort.Slice(assemblies, func(i, j int) bool { return assemblies[i].FirstAt.Before(assemblies[j].FirstAt) })
 	for _, a := range assemblies {
 		if ctx.Err() != nil {
 			return
@@ -202,7 +249,7 @@ func (m *LiveManager) flushOTLP(ctx context.Context) {
 		batch, mapErr := MapOTLPJSON(body)
 		complete := mapErr == nil && len(batch.Events) > 0 && batch.Events[0].Result.Response != nil && batch.Events[0].Result.Response != ""
 		if complete {
-			if time.Since(a.UpdatedAt) < time.Duration(cfg.QuietSeconds)*time.Second {
+			if time.Since(a.UpdatedAt) < time.Duration(cfg.QuietSeconds)*time.Second && time.Since(a.FirstAt) < time.Duration(cfg.EvidenceTimeoutSeconds)*time.Second {
 				continue
 			}
 		} else if time.Since(a.FirstAt) < time.Duration(cfg.EvidenceTimeoutSeconds)*time.Second {
@@ -224,9 +271,13 @@ func (m *LiveManager) flushOTLP(ctx context.Context) {
 			event := &batch.Events[i]
 			event.EventID = "otlp:" + a.Key + ":" + Digest(a.Spans)
 			event.EvidenceRevision = a.Revision
+			if event.Case.Metadata == nil {
+				event.Case.Metadata = map[string]any{}
+			}
+			event.Case.Metadata["seven_eval_otlp_assembly"] = a.Key
 			if !complete {
 				event.Result.Response = nil
-				event.Case.Metadata = map[string]any{"seven_eval_evidence_state": "incomplete"}
+				event.Case.Metadata["seven_eval_evidence_state"] = "incomplete"
 			}
 		}
 		_, _ = m.Ingest(ctx, batch)
@@ -241,5 +292,6 @@ func (m *LiveManager) assemblyEmittedLocked(a otlpAssembly) bool {
 	if source == "" {
 		source = "otlp"
 	}
-	return m.records[liveKey(a.PlanID, source, "otlp:"+a.Key+":"+Digest(a.Spans))] != nil
+	r, err := m.recordLocked(liveKey(a.PlanID, source, "otlp:"+a.Key+":"+Digest(a.Spans)))
+	return err == nil && r != nil
 }

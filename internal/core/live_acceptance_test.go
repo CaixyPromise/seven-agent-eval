@@ -42,11 +42,11 @@ func TestLiveProjectionFailureACKRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer recovered.Close()
-	if len(recovered.records) != 1 {
+	if len(testLiveRecords(t, recovered)) != 1 {
 		t.Fatal("ACK event lost")
 	}
 	recovered.scorePending(context.Background())
-	for _, r := range recovered.records {
+	for _, r := range testLiveRecords(t, recovered) {
 		if r.Case == nil {
 			t.Fatal("recovery did not score")
 		}
@@ -61,7 +61,7 @@ func TestLiveProcessorRecomputeAndDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.scorePending(context.Background())
-	report, err := m.Report(context.Background(), "production", time.Now().Add(-time.Hour), time.Now())
+	report, err := liveReport(t, m, context.Background(), "production", time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestLiveProcessorRecomputeAndDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.scorePending(context.Background())
-	disabled, err := m.Report(context.Background(), "disabled", time.Now().Add(-time.Hour), time.Now())
+	disabled, err := liveReport(t, m, context.Background(), "disabled", time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,8 +100,8 @@ func TestLiveJudgePolicyAndReservationRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.scorePending(context.Background())
-	one := m.records[liveKey("production", first.Source, first.EventID)]
-	two := m.records[liveKey("production", second.Source, second.EventID)]
+	one := testLiveRecords(t, m)[liveKey("production", first.Source, first.EventID)]
+	two := testLiveRecords(t, m)[liveKey("production", second.Source, second.EventID)]
 	if one.Decisions["evaluator:judge"] != "selected" || two.Decisions["evaluator:judge"] != "budget_exhausted" {
 		t.Fatalf("budget/order: %v %v", one.Decisions, two.Decisions)
 	}
@@ -123,7 +123,7 @@ func TestLiveJudgePolicyAndReservationRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer recovered.Close()
-	if recovered.records[liveKey("production", first.Source, first.EventID)].Decisions["evaluator:judge"] != "selected" {
+	if testLiveRecords(t, recovered)[liveKey("production", first.Source, first.EventID)].Decisions["evaluator:judge"] != "selected" {
 		t.Fatal("reservation lost")
 	}
 }
@@ -146,7 +146,7 @@ func TestOTLPCrossBatchQuietAndRecovery(t *testing.T) {
 		t.Fatalf("child: %+v %v", got, err)
 	}
 	m.flushOTLP(context.Background())
-	if len(m.records) != 0 {
+	if len(testLiveRecords(t, m)) != 0 {
 		t.Fatal("incomplete trace scored early")
 	}
 	m.Close()
@@ -161,19 +161,19 @@ func TestOTLPCrossBatchQuietAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.flushOTLP(context.Background())
-	if len(m.records) != 0 {
+	if len(testLiveRecords(t, m)) != 0 {
 		t.Fatal("quiet period skipped")
 	}
-	for key, a := range m.assemblies {
+	for _, a := range testLiveAssemblies(t, m) {
 		a.UpdatedAt = time.Now().Add(-6 * time.Second)
-		m.assemblies[key] = a
+		setTestAssembly(t, m, a)
 	}
 	m.flushOTLP(context.Background())
 	m.scorePending(context.Background())
-	if len(m.records) != 1 {
+	if len(testLiveRecords(t, m)) != 1 {
 		t.Fatal("assembly not emitted")
 	}
-	for _, r := range m.records {
+	for _, r := range testLiveRecords(t, m) {
 		if len(r.Event.Result.Contexts) != 1 || r.Case == nil {
 			t.Fatal("retrieval evidence lost")
 		}
@@ -194,7 +194,7 @@ func TestLiveRevisionIdentityAndFrozenWindow(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 	m.scorePending(ctx)
-	before, err := m.Report(ctx, "production", time.Now().Add(-time.Hour), time.Now())
+	before, err := liveReport(t, m, ctx, "production", time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,14 +208,14 @@ func TestLiveRevisionIdentityAndFrozenWindow(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 	m.scorePending(ctx)
-	after, err := m.Report(ctx, "production", time.Now().Add(-time.Hour), time.Now())
+	after, err := liveReport(t, m, ctx, "production", time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(after.Windows) != 1 || after.Current.Total != 2 || after.Current.Scope.Revision <= before.Current.Scope.Revision {
 		t.Fatal("revision moved window or denominator")
 	}
-	frozen, err := m.Window(ctx, before.Current.ID)
+	frozen, err := liveWindow(t, m, ctx, before.Current.ID)
 	if err != nil || Digest(frozen) != Digest(*before.Current) {
 		t.Fatalf("snapshot changed: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestLiveInterruptedJudgeNeverReplayed(t *testing.T) {
 	if _, err := m.Ingest(ctx, IngestBatch{PlanID: "production", Events: []ProductionEvent{event}}); err != nil {
 		t.Fatal(err)
 	}
-	r := m.records[liveKey("production", event.Source, event.EventID)]
+	r := testLiveRecords(t, m)[liveKey("production", event.Source, event.EventID)]
 	now := time.Now().UTC()
 	r.StartedAt = &now
 	r.Decisions = map[string]string{"evaluator:judge": "selected"}
@@ -248,11 +248,11 @@ func TestLiveInterruptedJudgeNeverReplayed(t *testing.T) {
 	}
 	defer recovered.Close()
 	recovered.scorePending(ctx)
-	r = recovered.records[liveKey("production", event.Source, event.EventID)]
+	r = testLiveRecords(t, recovered)[liveKey("production", event.Source, event.EventID)]
 	if r.Case == nil || r.Case.Reason != "evaluation_interrupted" {
 		t.Fatal("uncertain judge replayed or lost")
 	}
-	report, err := recovered.Report(ctx, "production", time.Now().Add(-time.Hour), time.Now())
+	report, err := liveReport(t, recovered, ctx, "production", time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestLivePauseAndTruncatedUnacknowledgedTail(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 	m.scorePending(ctx)
-	for _, r := range m.records {
+	for _, r := range testLiveRecords(t, m) {
 		if r.StartedAt != nil {
 			t.Fatal("dispatch while paused")
 		}
@@ -292,14 +292,14 @@ func TestLivePauseAndTruncatedUnacknowledgedTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer recovered.Close()
-	if !recovered.paused["production"] || len(recovered.records) != 1 {
+	if !recovered.paused["production"] || len(testLiveRecords(t, recovered)) != 1 {
 		t.Fatal("durable pause/ACK lost")
 	}
 	if _, err = recovered.SetPaused(ctx, "production", false); err != nil {
 		t.Fatal(err)
 	}
 	recovered.scorePending(ctx)
-	for _, r := range recovered.records {
+	for _, r := range testLiveRecords(t, recovered) {
 		if r.Case == nil {
 			t.Fatal("resume failed")
 		}
@@ -319,7 +319,7 @@ func TestLiveJudgeRequiresPolicyAndZeroSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.scorePending(ctx)
-	for _, r := range m.records {
+	for _, r := range testLiveRecords(t, m) {
 		if r.Decisions["evaluator:judge"] != "skipped" || r.Case == nil || r.Case.Status != "completed" {
 			t.Fatal("zero sampling ran judge")
 		}
@@ -394,16 +394,16 @@ func TestOTLPMissingRootTimeoutThenLateRevision(t *testing.T) {
 	if _, err = m.IngestOTLP(ctx, body); err != nil {
 		t.Fatal(err)
 	}
-	for key, a := range m.assemblies {
+	for _, a := range testLiveAssemblies(t, m) {
 		a.FirstAt = time.Now().Add(-121 * time.Second)
-		m.assemblies[key] = a
+		setTestAssembly(t, m, a)
 	}
 	m.flushOTLP(ctx)
 	m.scorePending(ctx)
-	if len(m.records) != 1 {
+	if len(testLiveRecords(t, m)) != 1 {
 		t.Fatal("incomplete evidence not emitted at timeout")
 	}
-	for _, r := range m.records {
+	for _, r := range testLiveRecords(t, m) {
 		if r.Case.Metrics[0].Status != "not_computable" || r.Case.Metrics[0].Value != nil {
 			t.Fatal("missing root scored as zero")
 		}
@@ -413,17 +413,17 @@ func TestOTLPMissingRootTimeoutThenLateRevision(t *testing.T) {
 	if _, err = m.IngestOTLP(ctx, body); err != nil {
 		t.Fatal(err)
 	}
-	for key, a := range m.assemblies {
+	for _, a := range testLiveAssemblies(t, m) {
 		a.UpdatedAt = time.Now().Add(-6 * time.Second)
-		m.assemblies[key] = a
+		setTestAssembly(t, m, a)
 	}
 	m.flushOTLP(ctx)
 	m.scorePending(ctx)
-	report, err := m.Report(ctx, "production", time.Now().Add(-time.Hour), time.Now())
+	report, err := liveReport(t, m, ctx, "production", time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.records) != 2 || len(report.Windows) != 1 || report.Current.Total != 1 || report.Current.Scope.Scored != 1 {
+	if len(testLiveRecords(t, m)) != 2 || len(report.Windows) != 1 || report.Current.Total != 1 || report.Current.Scope.Scored != 1 {
 		t.Fatal("late root did not replace incomplete evidence")
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -25,18 +26,21 @@ import (
 )
 
 type liveRecord struct {
-	Expired        bool              `json:"expired,omitempty"`
-	ScoredSequence int               `json:"scored_sequence,omitempty"`
-	Sequence       int               `json:"sequence"`
-	WindowTime     time.Time         `json:"window_time"`
-	StartedAt      *time.Time        `json:"started_at,omitempty"`
-	Decisions      map[string]string `json:"decisions,omitempty"`
-	PlanID         string            `json:"plan_id"`
-	Event          ProductionEvent   `json:"event"`
-	Digest         string            `json:"digest"`
-	ReceivedAt     time.Time         `json:"received_at"`
-	ScoredAt       *time.Time        `json:"scored_at,omitempty"`
-	Case           *CaseResult       `json:"case,omitempty"`
+	Unit               string            `json:"unit"`
+	WindowStart        time.Time         `json:"window_start"`
+	DecisionIdentities map[string]string `json:"decision_identities,omitempty"`
+	Expired            bool              `json:"expired,omitempty"`
+	ScoredSequence     int               `json:"scored_sequence,omitempty"`
+	Sequence           int               `json:"sequence"`
+	WindowTime         time.Time         `json:"window_time"`
+	StartedAt          *time.Time        `json:"started_at,omitempty"`
+	Decisions          map[string]string `json:"decisions,omitempty"`
+	PlanID             string            `json:"plan_id"`
+	Event              ProductionEvent   `json:"event"`
+	Digest             string            `json:"digest"`
+	ReceivedAt         time.Time         `json:"received_at"`
+	ScoredAt           *time.Time        `json:"scored_at,omitempty"`
+	Case               *CaseResult       `json:"case,omitempty"`
 }
 type liveJournal struct {
 	ExpiredScope *ExpiredWindow  `json:"expired_scope,omitempty"`
@@ -82,11 +86,12 @@ type LiveReport struct {
 	Series         []LivePoint    `json:"series"`
 }
 type LiveManager struct {
+	rangeCacheKey      string
+	rangeCacheSummary  *WindowScope
+	rangeCacheBacklog  []BacklogPoint
 	compactPublish     func(string, string) error
-	expiredRanges      map[string]ExpiredWindow
-	expiredWindows     map[string]bool
-	retentionAudits    []RetentionAudit
-	assemblies         map[string]otlpAssembly
+	projectionDirty    bool
+	reportMu           sync.Mutex
 	projectionDegraded bool
 	journalFailure     error
 	appendRecord       func(string, []byte) error
@@ -95,7 +100,6 @@ type LiveManager struct {
 	db                 *sql.DB
 	mu                 sync.Mutex
 	seq                int
-	records            map[string]*liveRecord // plan + source + event id
 	plans              map[string]Run
 	paused             map[string]bool
 	wake               chan struct{}
@@ -113,11 +117,17 @@ func NewLiveManager(engine *Engine) (*LiveManager, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err = db.Exec("CREATE TABLE IF NOT EXISTS live_projection (id TEXT PRIMARY KEY, body BLOB NOT NULL)"); err != nil {
+	if _, err = db.Exec(liveDDL); err != nil {
 		db.Close()
 		return nil, err
 	}
-	m := &LiveManager{Engine: engine, root: root, db: db, records: map[string]*liveRecord{}, plans: map[string]Run{}, paused: map[string]bool{}, assemblies: map[string]otlpAssembly{}, expiredWindows: map[string]bool{}, wake: make(chan struct{}, 1)}
+	// Scratch snapshots survive an in-process projection repair, but never a
+	// process restart. Active readers must retain their frozen evidence on repair.
+	if _, err = db.Exec("DELETE FROM live_snapshots"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	m := &LiveManager{Engine: engine, root: root, db: db, plans: map[string]Run{}, paused: map[string]bool{}, wake: make(chan struct{}, 1)}
 	if err = m.rebuild(); err != nil {
 		db.Close()
 		return nil, err
@@ -175,6 +185,8 @@ func cloneLiveRun(in Run) Run {
 	if decodeJSON(b, &out) != nil {
 		return Run{}
 	}
+	out.caseSource = in.caseSource
+	out.inputSource = in.inputSource
 	return out
 }
 
@@ -202,11 +214,18 @@ func (m *LiveManager) plan(ctx context.Context, id string) (Run, error) {
 		return Run{}, err
 	}
 	m.mu.Lock()
+	if len(m.plans) >= MaxLivePlans {
+		m.mu.Unlock()
+		return Run{}, errors.New("too many active stream plans")
+	}
 	m.plans[id] = r
 	m.mu.Unlock()
 	return cloneLiveRun(r), nil
 }
 func (m *LiveManager) appendLocked(ev liveJournal) error {
+	if err := m.ensureProjectionLocked(); err != nil {
+		return err
+	}
 	if m.journalFailure != nil {
 		return errors.New("live journal requires recovery")
 	}
@@ -229,25 +248,48 @@ func (m *LiveManager) appendLocked(ev liveJournal) error {
 		return err
 	}
 	m.seq = ev.Sequence
-	// The journal is authoritative. This SQLite write is only a query projection.
-	if _, err = m.db.Exec("INSERT INTO live_projection(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body", fmt.Sprintf("%09d", ev.Sequence), b); err != nil {
-		// ACK depends only on the synced journal. Keep the in-memory state in
-		// step with it even if this rebuildable projection is unavailable.
+	tx, err := m.db.Begin()
+	if err == nil {
+		err = m.project(tx, ev, b)
+		if err == nil {
+			err = commitProjection(m.db, tx)
+		} else {
+			_ = tx.Rollback()
+		}
+	}
+	if err != nil {
+		log.Printf("online projection failed at durable sequence %d: %v", ev.Sequence, err)
 		m.projectionDegraded = true
+		m.projectionDirty = true
+	}
+	if ev.Type == "plan.paused" {
+		m.paused[ev.PlanID] = true
+	}
+	if ev.Type == "plan.resumed" {
+		m.paused[ev.PlanID] = false
 	}
 	return nil
 }
 func (m *LiveManager) rebuild() error {
-	if m.expiredRanges == nil {
-		m.expiredRanges = map[string]ExpiredWindow{}
-	}
-	if _, err := m.db.Exec("DELETE FROM live_projection"); err != nil {
+	if _, err := m.db.Exec(liveDDL); err != nil {
 		return err
 	}
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"live_projection", "live_records", "live_units", "live_decisions", "live_assemblies", "live_expired", "live_audits", "live_emissions", "live_controls"} {
+		if _, err = tx.Exec("DELETE FROM " + table); err != nil {
+			return err
+		}
+	}
+	m.seq = 0
+	m.paused = map[string]bool{}
 	p := filepath.Join(m.root, "events.jsonl")
 	f, err := os.Open(p)
 	if os.IsNotExist(err) {
-		return nil
+		return commitProjection(m.db, tx)
 	}
 	if err != nil {
 		return err
@@ -258,68 +300,31 @@ func (m *LiveManager) rebuild() error {
 	for {
 		line, readErr := readJournalLine(reader, 64<<20)
 		if readErr == io.EOF {
-			// An incomplete, unacknowledged tail is not a committed record.
 			if len(line) > 0 {
-				return truncateJournal(p, offset)
+				if err = truncateJournal(p, offset); err != nil {
+					return err
+				}
 			}
-			return nil
+			return commitProjection(m.db, tx)
 		}
 		if readErr != nil {
 			return readErr
 		}
-		if len(line) > 64<<20 {
-			return errors.New("live journal record too large")
-		}
 		var ev liveJournal
-		if err := decodeJSON(line, &ev); err != nil {
+		if err = decodeJSON(line, &ev); err != nil {
 			return errors.New("corrupt live journal")
 		}
 		if ev.Sequence != m.seq+1 && !(offset == 0 && ev.Type == "journal.compacted" && ev.Sequence > 0) {
 			return errors.New("live journal sequence gap")
 		}
 		m.seq = ev.Sequence
-		if _, err := m.db.Exec("INSERT INTO live_projection(id,body) VALUES(?,?)", fmt.Sprintf("%09d", ev.Sequence), line); err != nil {
+		if err = m.project(tx, ev, line); err != nil {
 			return err
 		}
-		switch ev.Type {
-		case "window.expired":
-			m.expiredWindows[ev.WindowID] = true
-			if ev.ExpiredScope != nil {
-				m.expiredRanges[ev.WindowID] = *ev.ExpiredScope
-			}
-		case "retention.applied":
-			if ev.Retention != nil {
-				m.retentionAudits = append(m.retentionAudits, *ev.Retention)
-			}
-		case "event.restored":
-			if ev.Record != nil {
-				copy := *ev.Record
-				m.records[liveKey(copy.PlanID, copy.Event.Source, copy.Event.EventID)] = &copy
-			}
-		case "otlp.updated":
-			if ev.Assembly != nil {
-				m.assemblies[ev.Assembly.Key] = *ev.Assembly
-			}
-		case "event.accepted":
-			if ev.Record != nil {
-				copy := *ev.Record
-				copy.Sequence = ev.Sequence
-				if copy.WindowTime.IsZero() {
-					copy.WindowTime = copy.Event.EventTime
-				}
-				m.records[liveKey(copy.PlanID, copy.Event.Source, copy.Event.EventID)] = &copy
-			}
-		case "event.started", "event.scored":
-			if ev.Record != nil {
-				if old := m.records[liveKey(ev.Record.PlanID, ev.Record.Event.Source, ev.Record.Event.EventID)]; old != nil {
-					old.Case, old.ScoredAt = ev.Record.Case, ev.Record.ScoredAt
-					old.ScoredSequence = ev.Record.ScoredSequence
-					old.StartedAt, old.Decisions = ev.Record.StartedAt, ev.Record.Decisions
-				}
-			}
-		case "plan.paused":
+		if ev.Type == "plan.paused" {
 			m.paused[ev.PlanID] = true
-		case "plan.resumed":
+		}
+		if ev.Type == "plan.resumed" {
 			m.paused[ev.PlanID] = false
 		}
 		offset += int64(len(line))
@@ -342,11 +347,9 @@ func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResu
 	out := IngestResult{Items: make([]IngestItem, 0, len(batch.Events))}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	pending := 0
-	for _, r := range m.records {
-		if r.PlanID == batch.PlanID && !r.Expired && r.Case == nil {
-			pending++
-		}
+	pending, err := m.pendingLocked(batch.PlanID)
+	if err != nil {
+		return out, err
 	}
 	for _, event := range batch.Events {
 		encoded, _ := json.Marshal(event)
@@ -372,7 +375,11 @@ func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResu
 			continue
 		}
 		key, digest := liveKey(batch.PlanID, event.Source, event.EventID), Digest(event)
-		if prior := m.records[key]; prior != nil {
+		prior, lookupErr := m.recordLocked(key)
+		if lookupErr != nil {
+			return out, lookupErr
+		}
+		if prior != nil {
 			if prior.Digest == digest {
 				out.Duplicate++
 				out.Items = append(out.Items, IngestItem{EventID: event.EventID, Status: "duplicate"})
@@ -383,28 +390,32 @@ func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResu
 			continue
 		}
 		unit, _ := unitKey(planRun.Effective.Plan, event)
-		conflict := false
-		expired := false
-		windowTime, earliest := event.EventTime, m.seq+1
-		for _, prior := range m.records {
-			priorUnit, _ := unitKey(planRun.Effective.Plan, prior.Event)
-			if prior.PlanID == batch.PlanID && priorUnit == unit && prior.Expired {
-				expired = true
-			}
-			if prior.PlanID == batch.PlanID && priorUnit == unit && prior.Sequence < earliest {
-				windowTime, earliest = prior.WindowTime, prior.Sequence
-			}
-			if prior.PlanID == batch.PlanID && priorUnit == unit && prior.Event.EvidenceRevision == event.EvidenceRevision {
-				conflict = true
-				break
-			}
+		conflict, expired := false, false
+		windowTime := event.EventTime
+		var firstNS int64
+		var unitExpired bool
+		err = m.db.QueryRow("SELECT window_ns,expired FROM live_units WHERE plan=? AND unit=?", batch.PlanID, unit).Scan(&firstNS, &unitExpired)
+		if err == nil {
+			windowTime = time.Unix(0, firstNS).UTC()
+			expired = unitExpired
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return out, err
 		}
+		var versions int
+		if err = m.db.QueryRow("SELECT count(*) FROM live_records WHERE plan=? AND unit=? AND revision=?", batch.PlanID, unit, event.EvidenceRevision).Scan(&versions); err != nil {
+			return out, err
+		}
+		conflict = versions > 0
 		if conflict {
 			out.Rejected++
 			out.Items = append(out.Items, IngestItem{EventID: event.EventID, Status: "rejected", Code: "EVIDENCE_REVISION_CONFLICT"})
 			continue
 		}
-		if expired || m.expiredEventLocked(batch.PlanID, windowTime) {
+		expiredRange, expiryErr := m.expiredEventLocked(batch.PlanID, windowTime)
+		if expiryErr != nil {
+			return out, expiryErr
+		}
+		if expired || expiredRange {
 			out.Rejected++
 			out.Items = append(out.Items, IngestItem{EventID: event.EventID, Status: "rejected", Code: "DATA_EXPIRED"})
 			continue
@@ -414,11 +425,10 @@ func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResu
 			out.Items = append(out.Items, IngestItem{EventID: event.EventID, Status: "rejected", Code: "QUEUE_FULL"})
 			continue
 		}
-		record := &liveRecord{WindowTime: windowTime, Sequence: m.seq + 1, PlanID: batch.PlanID, Event: event, Digest: digest, ReceivedAt: time.Now().UTC()}
+		record := &liveRecord{Unit: unit, WindowStart: windowTime.Truncate(time.Duration(planRun.Effective.Plan.Stream.WindowSeconds) * time.Second), WindowTime: windowTime, Sequence: m.seq + 1, PlanID: batch.PlanID, Event: event, Digest: digest, ReceivedAt: time.Now().UTC()}
 		if err := m.appendLocked(liveJournal{Type: "event.accepted", PlanID: batch.PlanID, Record: record}); err != nil {
 			return out, err
 		}
-		m.records[key] = record
 		pending++
 		out.Accepted++
 		out.Items = append(out.Items, IngestItem{EventID: event.EventID, Status: "accepted"})
@@ -427,81 +437,73 @@ func (m *LiveManager) Ingest(ctx context.Context, batch IngestBatch) (IngestResu
 	return out, nil
 }
 func (m *LiveManager) scorePending(ctx context.Context) {
-	m.mu.Lock()
-	work := []*liveRecord{}
-	for _, r := range m.records {
-		if !r.Expired && r.Case == nil && !m.paused[r.PlanID] {
-			copy := *r
-			work = append(work, &copy)
-		}
-	}
-	m.mu.Unlock()
-	sort.Slice(work, func(i, j int) bool { return work[i].Sequence < work[j].Sequence })
-	for _, record := range work {
-		if ctx.Err() != nil {
+	var after int
+	for {
+		m.mu.Lock()
+		batch, err := m.recordBatchLocked("SELECT body FROM live_records r WHERE expired=0 AND scored=0 AND seq>? AND NOT EXISTS(SELECT 1 FROM live_controls c WHERE c.plan=r.plan AND c.paused=1) ORDER BY seq LIMIT ?", after, LiveReadBatch)
+		m.mu.Unlock()
+		if err != nil || len(batch) == 0 {
 			return
 		}
-		plan, err := m.plan(ctx, record.PlanID)
-		if err != nil {
-			continue
-		}
-		m.mu.Lock()
-		if m.paused[record.PlanID] {
-			m.mu.Unlock()
-			continue
-		}
-		if record.StartedAt == nil {
-			now := time.Now().UTC()
-			record.StartedAt = &now
-			record.Decisions = m.judgeDecisionsLocked(plan, record)
-			if err := m.appendLocked(liveJournal{Type: "event.started", PlanID: record.PlanID, Record: record}); err != nil {
-				m.mu.Unlock()
+		for i := range batch {
+			record := &batch[i]
+			after = record.Sequence
+			if ctx.Err() != nil {
 				return
 			}
-			original := m.records[liveKey(record.PlanID, record.Event.Source, record.Event.EventID)]
-			original.StartedAt, original.Decisions = record.StartedAt, record.Decisions
-		} else {
-			// A reserved judge with no durable result has an uncertain outcome.
-			// Preserve its budget slot and surface interruption without replaying it.
-			decisions := map[string]string{}
-			for ref, decision := range record.Decisions {
-				if decision == "selected" {
-					decision = "interrupted"
+			plan, err := m.plan(ctx, record.PlanID)
+			if err != nil {
+				continue
+			}
+			m.mu.Lock()
+			if m.paused[record.PlanID] {
+				m.mu.Unlock()
+				continue
+			}
+			if record.StartedAt == nil {
+				now := time.Now().UTC()
+				record.StartedAt = &now
+				record.Decisions, err = m.judgeDecisionsLocked(plan, record)
+				if err == nil {
+					err = m.appendLocked(liveJournal{Type: "event.started", PlanID: record.PlanID, Record: record})
 				}
-				decisions[ref] = decision
+				if err != nil {
+					m.mu.Unlock()
+					return
+				}
+			} else {
+				for ref, decision := range record.Decisions {
+					if decision == "selected" {
+						record.Decisions[ref] = "interrupted"
+					}
+				}
 			}
-			record.Decisions = decisions
-		}
-		m.mu.Unlock()
-		cctx, cancel := context.WithTimeout(ctx, time.Duration(plan.Effective.Plan.TimeoutSeconds)*time.Second)
-		cctx = context.WithValue(cctx, liveDecisionKey{}, record.Decisions)
-		// User case IDs are not globally unique across production requests.
-		c := record.Event.Case
-		unit, _ := unitKey(plan.Effective.Plan, record.Event)
-		c.ID = "live-" + Digest([]string{record.PlanID, unit})
-		cctx = context.WithValue(cctx, liveIdentityKey{}, []any{record.PlanID, unit, record.Event.EvidenceRevision})
-		caseResult, err := m.Engine.EvaluateExisting(cctx, &plan, c, record.Event.Result)
-		cancel()
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil {
-			continue
-		}
-		now := time.Now().UTC()
-		record.Case, record.ScoredAt = &caseResult, &now
-		m.mu.Lock()
-		original := m.records[liveKey(record.PlanID, record.Event.Source, record.Event.EventID)]
-		if original != nil && original.Case == nil {
+			m.mu.Unlock()
+			cctx, cancel := context.WithTimeout(ctx, time.Duration(plan.Effective.Plan.TimeoutSeconds)*time.Second)
+			cctx = context.WithValue(cctx, liveDecisionKey{}, record.Decisions)
+			c := record.Event.Case
+			c.ID = "live-" + Digest([]string{record.PlanID, record.Unit})
+			cctx = context.WithValue(cctx, liveIdentityKey{}, []any{record.PlanID, record.Unit, record.Event.EvidenceRevision})
+			result, err := m.Engine.EvaluateExisting(cctx, &plan, c, record.Event.Result)
+			cancel()
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				continue
+			}
+			now := time.Now().UTC()
+			record.Case = &result
+			record.ScoredAt = &now
+			m.mu.Lock()
 			record.ScoredSequence = m.seq + 1
-			if m.appendLocked(liveJournal{Type: "event.scored", PlanID: record.PlanID, Record: record}) == nil {
-				original.Case, original.ScoredAt = record.Case, record.ScoredAt
-				original.ScoredSequence = record.ScoredSequence
-				original.Decisions = record.Decisions
+			err = m.appendLocked(liveJournal{Type: "event.scored", PlanID: record.PlanID, Record: record})
+			m.mu.Unlock()
+			if err != nil {
+				return
 			}
+			m.signal()
 		}
-		m.mu.Unlock()
-		m.signal()
 	}
 }
 func percentile(values []float64, q float64) *float64 {
@@ -569,11 +571,9 @@ func (m *LiveManager) SetPaused(ctx context.Context, id string, paused bool) (Li
 	return m.statusLocked(id, plan), nil
 }
 func (m *LiveManager) statusLocked(id string, plan Run) LivePlanStatus {
-	pending := 0
-	for _, r := range m.records {
-		if r.PlanID == id && !r.Expired && r.Case == nil {
-			pending++
-		}
+	pending, err := m.pendingLocked(id)
+	if err != nil {
+		m.projectionDegraded = true
 	}
 	stat, _ := os.Stat(filepath.Join(m.root, "events.jsonl"))
 	size := int64(0)
@@ -582,84 +582,96 @@ func (m *LiveManager) statusLocked(id string, plan Run) LivePlanStatus {
 	}
 	return LivePlanStatus{ID: id, Name: id, Unit: plan.Effective.Plan.Stream.Unit, Paused: m.paused[id], Pending: pending, Storage: size, ProjectionDegraded: m.projectionDegraded}
 }
+
+var ErrLiveCapacity = errors.New("live query capacity exceeded")
+
 func (m *LiveManager) Report(ctx context.Context, planID string, from, to time.Time) (LiveReport, error) {
-	plan, err := m.plan(ctx, planID)
+	m.reportMu.Lock()
+	defer m.reportMu.Unlock()
+	base, err := m.plan(ctx, planID)
 	if err != nil {
 		return LiveReport{}, err
 	}
-	if plan.Effective.Plan.Mode != "stream" {
+	if base.Effective.Plan.Mode != "stream" {
 		return LiveReport{}, errors.New("plan is not a stream")
 	}
-	if to.Before(from) || to.Equal(from) {
+	if !to.After(from) || to.Sub(from) > 24*time.Hour {
 		return LiveReport{}, errors.New("invalid report range")
 	}
 	m.mu.Lock()
-	records := []liveRecord{}
-	for _, r := range m.records {
-		if r.PlanID == planID && !r.Expired {
-			records = append(records, *r)
-		}
-	}
-	status := m.statusLocked(planID, plan)
-	m.mu.Unlock()
-	latest := map[string]liveRecord{}
-	for _, r := range records {
-		unit, _ := unitKey(plan.Effective.Plan, r.Event)
-		if old, ok := latest[unit]; !ok || r.Event.EvidenceRevision > old.Event.EvidenceRevision || (r.Event.EvidenceRevision == old.Event.EvidenceRevision && r.ReceivedAt.After(old.ReceivedAt)) {
-			latest[unit] = r
-		}
-	}
-	groups := map[time.Time][]liveRecord{}
-	step := time.Duration(plan.Effective.Plan.Stream.WindowSeconds) * time.Second
-	for _, r := range latest {
-		if r.WindowTime.Before(from) || !r.WindowTime.Before(to) {
-			continue
-		}
-		start := r.WindowTime.UTC().Truncate(step)
-		groups[start] = append(groups[start], r)
-	}
-	starts := make([]time.Time, 0, len(groups))
-	for start := range groups {
-		starts = append(starts, start)
-	}
-	sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
-	out := LiveReport{Plan: status, From: from, To: to, Windows: []Run{}, Series: []LivePoint{}}
-	m.mu.Lock()
-	for _, scope := range m.expiredRanges {
-		if scope.PlanID == planID && scope.End.After(from) && scope.Start.Before(to) {
-			out.ExpiredWindows++
-		}
-	}
-	m.mu.Unlock()
-	for _, start := range starts {
-		window := m.window(ctx, plan, start, groups[start])
-		if ctx.Err() != nil {
-			return LiveReport{}, ctx.Err()
-		}
-		// Freeze the exact revision shown to the user. A later revision must
-		// not invalidate an open drawer or silently change its export.
-		m.mu.Lock()
-		dir := filepath.Join(m.root, "windows")
-		path := filepath.Join(dir, Digest(window.ID)+".json")
-		if body, readErr := os.ReadFile(path); readErr == nil {
-			var cached Run
-			if decodeJSON(body, &cached) == nil {
-				window = cached
-			}
-		} else if os.IsNotExist(readErr) && window.Message == "" {
-			if err = os.MkdirAll(dir, 0700); err == nil {
-				err = atomicJSON(path, window)
-			}
-		} else if !os.IsNotExist(readErr) {
-			err = readErr
-		}
+	if err = m.ensureProjectionLocked(); err != nil {
 		m.mu.Unlock()
-		if err != nil {
-			return LiveReport{}, err
+		return LiveReport{}, err
+	}
+	windowSize := time.Duration(base.Effective.Plan.Stream.WindowSeconds) * time.Second
+	alignedFrom, alignedTo := from.Truncate(windowSize), to.Truncate(windowSize).Add(windowSize)
+	var count int
+	err = m.db.QueryRow("SELECT count(*) FROM live_records WHERE plan=? AND expired=0 AND window_ns>=? AND window_ns<?", planID, alignedFrom.UnixNano(), alignedTo.UnixNano()).Scan(&count)
+	if err != nil || count > MaxLiveRangeRecords {
+		m.mu.Unlock()
+		if err == nil {
+			err = ErrLiveCapacity
 		}
-		out.Windows = append(out.Windows, window)
-		for _, output := range window.Outputs {
-			if stats, ok := output.Data["window"].(map[string]any); ok {
+		return LiveReport{}, err
+	}
+	status := m.statusLocked(planID, base)
+	snapshot := "report-" + Digest([]any{planID, m.seq, from, to})
+	if err = m.snapshotRangeLocked(snapshot, planID, alignedFrom, alignedTo, false); err != nil {
+		m.mu.Unlock()
+		return LiveReport{}, err
+	}
+	defer func() {
+		m.mu.Lock()
+		_, _ = m.db.Exec("DELETE FROM live_snapshots WHERE id=?", snapshot)
+		m.mu.Unlock()
+	}()
+	rows, err := m.db.Query("SELECT DISTINCT start_ns FROM live_snapshots WHERE id=? AND latest=1 AND window_ns>=? AND window_ns<? ORDER BY start_ns LIMIT ?", snapshot, from.UnixNano(), to.UnixNano(), MaxLiveReportWindows+1)
+	starts := []time.Time{}
+	if err == nil {
+		for rows.Next() {
+			var ns int64
+			if err = rows.Scan(&ns); err != nil {
+				break
+			}
+			starts = append(starts, time.Unix(0, ns).UTC())
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		rows.Close()
+	}
+	out := LiveReport{Plan: status, From: from, To: to, Windows: []Run{}, Series: []LivePoint{}}
+	if err == nil {
+		err = m.db.QueryRow("SELECT count(*) FROM live_expired WHERE plan=? AND end_ns>? AND start_ns<?", planID, from.UnixNano(), to.UnixNano()).Scan(&out.ExpiredWindows)
+	}
+	m.mu.Unlock()
+	if err != nil {
+		return out, err
+	}
+	if len(starts) > MaxLiveReportWindows {
+		return out, ErrLiveCapacity
+	}
+	viewBytes := 0
+	for _, start := range starts {
+		w, err := m.windowIndexed(ctx, base, start, snapshot)
+		if err != nil {
+			return out, err
+		}
+		view := runMetadata(w)
+		view.Scope = cloneScope(w.Scope)
+		view.Scope.Facts = nil
+		view.Scope.BacklogFacts = nil
+		encoded, encodeErr := json.Marshal(view)
+		if encodeErr != nil {
+			return out, encodeErr
+		}
+		viewBytes += len(encoded)
+		if viewBytes > MaxMetadataBytes/2 {
+			return LiveReport{}, ErrLiveCapacity
+		}
+		out.Windows = append(out.Windows, view)
+		for _, o := range w.Outputs {
+			if stats, ok := o.Data["window"].(map[string]any); ok {
 				if series, ok := stats["series"]; ok {
 					b, _ := json.Marshal(series)
 					var point LivePoint
@@ -673,60 +685,134 @@ func (m *LiveManager) Report(ctx context.Context, planID string, from, to time.T
 	if len(out.Windows) > 0 {
 		current := out.Windows[len(out.Windows)-1]
 		out.Current = &current
-		m.rangeSummary(ctx, plan, &out)
+		if err = m.rangeSummary(ctx, base, &out, snapshot); err != nil {
+			return out, err
+		}
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return out, err
+	}
+	if len(body) > MaxMetadataBytes {
+		return LiveReport{}, ErrLiveCapacity
 	}
 	return out, nil
 }
-func (m *LiveManager) window(ctx context.Context, base Run, start time.Time, records []liveRecord) Run {
+func cloneScope(s *WindowScope) *WindowScope {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	return &c
+}
+
+func (m *LiveManager) windowIndexed(ctx context.Context, base Run, start time.Time, snapshot string) (Run, error) {
 	end := start.Add(time.Duration(base.Effective.Plan.Stream.WindowSeconds) * time.Second)
-	scope := &WindowScope{Kind: "window", PlanID: base.Effective.Plan.ID, Start: start, End: end, Watermark: end.Add(time.Duration(base.Effective.Plan.Stream.AllowedLatenessSeconds) * time.Second), Revision: 1, State: "provisional", Received: len(records), Eligible: len(records), JudgeSampleRate: base.Effective.Plan.Stream.JudgeSampleRate, JudgeBudget: base.Effective.Plan.Stream.JudgePerWindowBudget}
+	m.mu.Lock()
+	if err := m.ensureProjectionLocked(); err != nil {
+		m.mu.Unlock()
+		return Run{}, err
+	}
+	count, revision, completed := 0, 1, 0
+	err := m.db.QueryRow("SELECT count(*),coalesce(max(max(seq,scored_seq)),1),coalesce(sum(scored),0) FROM live_snapshots WHERE id=? AND latest=1 AND start_ns=?", snapshot, start.UnixNano()).Scan(&count, &revision, &completed)
+	if err != nil || count > MaxLiveRangeRecords {
+		m.mu.Unlock()
+		if err == nil {
+			err = ErrLiveCapacity
+		}
+		return Run{}, err
+	}
+	scope := &WindowScope{Kind: "window", PlanID: base.Effective.Plan.ID, Start: start, End: end, Watermark: end.Add(time.Duration(base.Effective.Plan.Stream.AllowedLatenessSeconds) * time.Second), Revision: revision, State: "provisional", Received: count, Eligible: count, Pending: count - completed, JudgeSampleRate: base.Effective.Plan.Stream.JudgeSampleRate, JudgeBudget: base.Effective.Plan.Stream.JudgePerWindowBudget}
 	if !time.Now().UTC().Before(scope.Watermark) {
 		scope.State = "final"
 	}
-	sort.Slice(records, func(i, j int) bool { return records[i].Sequence < records[j].Sequence })
-	r := cloneLiveRun(base)
-	r.ID = fmt.Sprintf("live-%s-%d-r1", base.Effective.Plan.ID, start.Unix())
-	r.CreatedAt = time.Now().UTC()
-	r.Total = len(records)
-	r.Completed = 0
-	r.Cases = []CaseResult{}
-	r.Scope = scope
-	r.DatasetDigest = ""
-	r.Status = "completed"
-	for _, record := range records {
-		unit, _ := unitKey(base.Effective.Plan, record.Event)
-		scope.Facts = append(scope.Facts, WindowFact{Origin: map[string]string{"source": record.Event.Source, "project": record.Event.Project, "trace_id": record.Event.TraceID, "turn_id": record.Event.TurnID, "event_id": record.Event.EventID, "case_id": record.Event.Case.ID}, CaseID: "live-" + Digest([]string{record.PlanID, unit}), ReceivedAt: record.ReceivedAt, StartedAt: record.StartedAt, ScoredAt: record.ScoredAt, Revision: record.Event.EvidenceRevision})
-		if max(record.Sequence, record.ScoredSequence) > scope.Revision {
-			scope.Revision = max(record.Sequence, record.ScoredSequence)
-			r.ID = fmt.Sprintf("live-%s-%d-r%d", base.Effective.Plan.ID, start.Unix(), scope.Revision)
-		}
-		if record.Case == nil {
-			scope.Pending++
-			r.Status = "partial"
-			continue
-		}
-		r.Cases = append(r.Cases, *record.Case)
-		if record.Case.Status != "completed" {
-			r.Status = "partial"
-		}
-		r.Completed++
+	id := fmt.Sprintf("live-%s-%d-r%d-%s-%s", base.Effective.Plan.ID, start.Unix(), revision, scope.State, Digest(base.Effective)[:12])
+	cached, getErr := m.Engine.Store.Get(id)
+	if getErr == nil && cached.Message == "" {
+		m.mu.Unlock()
+		return cached, nil
 	}
-	if scope.State == "provisional" {
+	if _, err = m.db.Exec("INSERT OR IGNORE INTO live_snapshots SELECT ?,seq,body,start_ns,window_ns,scored,scored_seq,latest FROM live_snapshots WHERE id=? AND start_ns=? AND latest=1", id, snapshot, start.UnixNano()); err != nil {
+		m.mu.Unlock()
+		return Run{}, err
+	}
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); _, _ = m.db.Exec("DELETE FROM live_snapshots WHERE id=?", id); m.mu.Unlock() }()
+	r := cloneLiveRun(base)
+	r.ID = id
+	r.CreatedAt = time.Now().UTC()
+	r.Scope = scope
+	r.Total = count
+	r.Completed = completed
+	r.Status = "completed"
+	r.DatasetDigest = ""
+	r.Cases = nil
+	if count != completed || scope.State == "provisional" {
 		r.Status = "partial"
 	}
-	r.ID += "-" + scope.State
-	r.ID += "-" + Digest(base.Effective)[:12]
-	if body, err := os.ReadFile(filepath.Join(m.root, "windows", Digest(r.ID)+".json")); err == nil {
-		var cached Run
-		if decodeJSON(body, &cached) == nil {
-			return cached
+	scopeBytes := 0
+	err = m.walkSnapshot(id, func(record liveRecord) error {
+		fact := WindowFact{Origin: map[string]string{"source": record.Event.Source, "project": record.Event.Project, "trace_id": record.Event.TraceID, "turn_id": record.Event.TurnID, "event_id": record.Event.EventID, "case_id": record.Event.Case.ID}, CaseID: "live-" + Digest([]string{record.PlanID, record.Unit}), ReceivedAt: record.ReceivedAt, StartedAt: record.StartedAt, ScoredAt: record.ScoredAt, Revision: record.Event.EvidenceRevision}
+		b, err := json.Marshal(m.Engine.redactForRun(&r, fact))
+		if err != nil {
+			return err
 		}
+		if err = decodeJSON(b, &fact); err != nil {
+			return err
+		}
+		scopeBytes += len(b)
+		if scopeBytes > MaxMetadataBytes/2 {
+			return ErrLiveCapacity
+		}
+		scope.Facts = append(scope.Facts, fact)
+		if record.Case != nil && record.Case.Status != "completed" {
+			r.Status = "partial"
+		}
+		return nil
+	})
+	if err != nil {
+		return r, err
 	}
-	_ = m.Engine.ProcessExisting(ctx, &r)
+	r.caseSource = func(visit func(CaseResult) error) error {
+		return m.walkSnapshot(id, func(record liveRecord) error {
+			if record.Case != nil {
+				return visit(*record.Case)
+			}
+			return nil
+		})
+	}
+	r.inputSource = func(visit func(Case) error) error {
+		return m.walkSnapshot(id, func(record liveRecord) error {
+			c := record.Event.Case
+			if record.Case != nil {
+				c = record.Case.Case
+			}
+			c.ID = "live-" + Digest([]string{record.PlanID, record.Unit})
+			b, err := json.Marshal(m.Engine.redactForRun(&r, c))
+			if err != nil {
+				return err
+			}
+			if err = decodeJSON(b, &c); err != nil {
+				return err
+			}
+			return visit(c)
+		})
+	}
+	if getErr != nil {
+		r, err = m.Engine.Store.ImportRun(r)
+		if err != nil {
+			return r, err
+		}
+	} else {
+		r.caseSource = cached.caseSource
+		r.inputSource = cached.inputSource
+	}
+	if err = m.Engine.ProcessExisting(ctx, &r); err != nil {
+		return r, err
+	}
 	for _, output := range r.Outputs {
 		if stats, ok := output.Data["window"].(map[string]any); ok {
 			b, _ := json.Marshal(stats)
-			// Only copy statistical fields. A Processor cannot rewrite window identity.
 			var summary WindowScope
 			if decodeJSON(b, &summary) == nil {
 				scope.Scored, scope.Sampled, scope.Failed, scope.NotComputable = summary.Scored, summary.Sampled, summary.Failed, summary.NotComputable
@@ -737,44 +823,31 @@ func (m *LiveManager) window(ctx context.Context, base Run, start time.Time, rec
 			}
 		}
 	}
-	if b, err := json.Marshal(m.Engine.redactForRun(&r, r)); err == nil {
-		var redacted Run
-		if decodeJSON(b, &redacted) == nil {
-			r = redacted
-		}
+	r.Scope = scope
+	if err = m.Engine.Store.Commit(&r, "window.materialized", nil); err != nil {
+		return r, err
 	}
-	return r
+	view := runMetadata(r)
+	if err = atomicJSON(filepath.Join(m.root, "windows", Digest(id)+".json"), view); err != nil {
+		return r, err
+	}
+	return m.Engine.Store.Get(id)
 }
 func (m *LiveManager) Window(ctx context.Context, id string) (Run, error) {
 	m.mu.Lock()
-	expired := m.expiredWindows[id]
+	expired, projectionErr := m.expiredWindowLocked(id)
 	m.mu.Unlock()
+	if projectionErr != nil {
+		return Run{}, projectionErr
+	}
 	if expired {
 		return Run{}, ErrDataExpired
 	}
-	if body, err := os.ReadFile(filepath.Join(m.root, "windows", Digest(id)+".json")); err == nil {
-		var snapshot Run
-		if decodeJSON(body, &snapshot) == nil && snapshot.ID == id {
-			return snapshot, nil
-		}
+	r, err := m.Engine.Store.Get(id)
+	if err != nil || r.Scope == nil {
+		return Run{}, errors.New("window not found")
 	}
-	now := time.Now().UTC()
-	reports, err := m.Plans(ctx)
-	if err != nil {
-		return Run{}, err
-	}
-	for _, p := range reports {
-		r, e := m.Report(ctx, p.ID, now.Add(-30*24*time.Hour), now.Add(time.Minute))
-		if e != nil {
-			continue
-		}
-		for _, w := range r.Windows {
-			if w.ID == id {
-				return w, nil
-			}
-		}
-	}
-	return Run{}, errors.New("window not found")
+	return r, nil
 }
 
 // MapOTLPJSON accepts the deliberately documented OpenInference JSON subset.

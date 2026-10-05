@@ -187,7 +187,7 @@ func TestNodeStreamExtensions(t *testing.T) {
 	}
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
-		report, err := m.Report(context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
+		report, err := liveReport(t, m, context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
 		if err == nil && report.Current != nil && len(report.Current.Cases) == 1 && len(report.Current.Outputs) == 1 {
 			r := report.Current
 			if r.Outputs[0].Processor != "window@1" || len(r.Cases[0].Metrics) != 1 || r.Cases[0].Metrics[0].Status != "observed" {
@@ -295,7 +295,7 @@ func TestNodeJudgePolicyMissingAndErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			m.scorePending(context.Background())
-			two := m.records[liveKey("production", second.Source, second.EventID)]
+			two := testLiveRecords(t, m)[liveKey("production", second.Source, second.EventID)]
 			expected := "budget_exhausted"
 			if sample == "0" {
 				expected = "skipped"

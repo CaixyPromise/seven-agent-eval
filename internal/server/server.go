@@ -244,6 +244,9 @@ func (s *Server) liveUnavailable(w http.ResponseWriter) bool {
 	return true
 }
 func liveCode(err error) (string, int) {
+	if errors.Is(err, core.ErrLiveCapacity) {
+		return "WINDOW_CAPACITY_EXCEEDED", http.StatusUnprocessableEntity
+	}
 	var planErr *core.PlanError
 	if errors.As(err, &planErr) {
 		return "LIVE_PLAN_INVALID", http.StatusBadRequest

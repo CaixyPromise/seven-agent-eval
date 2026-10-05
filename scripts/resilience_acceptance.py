@@ -123,7 +123,7 @@ def main():
             finally:
                 monitor_stop.set();monitor_thread.join(timeout=20);assert not monitor_thread.is_alive()
             eventually(lambda:pending()==0,timeout=120)
-            report=request(base,'/api/live/plans/production/report?range=1h');window=report['current']
+            report=request(base,'/api/live/plans/production/report?range=1h');window=request(base,'/api/live/windows/'+report['current']['id'])
             assert window['scope']['received']==64+len(samples) and window['scope']['pending']==0
             record['sustained']={'nominal_events_per_second':1,'elapsed_seconds':time.monotonic()-started,'samples':samples,'queue_samples':queue_samples,'received':window['scope']['received'],'p95_scoring_latency_ms':window['scope'].get('p95_latency_ms')}
             import urllib.request
@@ -132,7 +132,7 @@ def main():
             cutoff=datetime.now(timezone.utc).isoformat()
             maintenance_env={**os.environ,'SEVEN_EVAL_NODE':'/missing-node','SEVEN_EVAL_PYTHON':'/missing-python'}
             preview=json.loads(subprocess.check_output(command+['retention','preview',cutoff],text=True,env=maintenance_env))
-            assert len(preview['records'])==64+len(samples) and len(preview['runs'])==3,preview
+            assert len(preview['records'])==64+len(samples) and len([r for r in preview['runs'] if not r.startswith('live-')])==3,preview
             journal=pkg/'.seven-evaluate/live/events.jsonl';before_bytes=journal.stat().st_size
             subprocess.run(command+['retention','apply',preview['digest']],check=True,capture_output=True,env=maintenance_env)
             record['retention']={'expired_records':len(preview['records']),'expired_runs':len(preview['runs']),'digest':preview['digest'],'journal_bytes_before':before_bytes,'journal_bytes_after':journal.stat().st_size}
@@ -156,7 +156,8 @@ def main():
         proc=subprocess.Popen([str(BIN),'--package',str(viewer),'--addr',f'127.0.0.1:{port}','serve',str(OUT/'window.seven.eval')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:
             eventually(lambda:request(base,'/api/health'),timeout=15)
-            assert_viewer_run(base,window)
+            from live_acceptance import window_full
+            assert_viewer_run(base,{**window,'cases':window_full(base,window)['cases']})
             with urllib.request.urlopen(base+'/api/runs/'+window['id']+'/report') as res:(OUT/'report.html').write_bytes(res.read())
             record['portable_reopen_without_runtimes']='PASS'
         finally:

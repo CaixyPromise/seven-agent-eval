@@ -22,7 +22,7 @@ export function ErrorNotice({
       closable={!!onDismiss}
       onClose={onDismiss}
       action={
-        onRetry && code !== "DATA_EXPIRED" ? (
+        onRetry && code !== "DATA_EXPIRED" && code !== "WINDOW_CAPACITY_EXCEEDED" ? (
           <Button size="small" onClick={onRetry}>
             重试
           </Button>

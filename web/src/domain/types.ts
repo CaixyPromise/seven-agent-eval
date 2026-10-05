@@ -126,7 +126,7 @@ export type WindowScope = {
   judge_per_window_budget?: number;
 };
 
-export type LiveWindow = Run & { scope: WindowScope; cases: CaseResult[] };
+export type LiveWindow = Run & { scope: WindowScope };
 
 export type LivePoint = {
   unscored?: number;

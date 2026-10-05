@@ -59,7 +59,7 @@ func TestLiveIngestDeduplicatesScoresAndExports(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var report LiveReport
 	for time.Now().Before(deadline) {
-		report, err = m.Report(context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
+		report, err = liveReport(t, m, context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
 		if err == nil && report.Current != nil && report.Current.Scope.Scored == 1 {
 			break
 		}
@@ -95,7 +95,7 @@ func TestLiveConflictPauseAndRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(80 * time.Millisecond)
-	report, err := m.Report(context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
+	report, err := liveReport(t, m, context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
 	if err != nil || report.Current == nil || report.Current.Scope.Pending == 0 {
 		t.Fatalf("paused report: %+v %v", report, err)
 	}
@@ -113,7 +113,7 @@ func TestLiveConflictPauseAndRebuild(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		report, _ = recovered.Report(context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
+		report, _ = liveReport(t, recovered, context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
 		if report.Current != nil && report.Current.Scope.Scored == 2 {
 			return
 		}
@@ -133,7 +133,7 @@ func TestLiveRevisionReplacesWindowContribution(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		report, err := m.Report(context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
+		report, err := liveReport(t, m, context.Background(), "production", time.Now().Add(-time.Hour), time.Now().Add(time.Minute))
 		if err == nil && report.Current != nil && report.Current.Scope.Scored == 1 {
 			if report.Current.Scope.Received != 1 || report.Current.Scope.Revision < 2 || len(report.Current.Cases) != 1 || report.Current.Cases[0].Result.Response != "hello" {
 				t.Fatalf("revision did not replace prior contribution: %+v", report.Current)

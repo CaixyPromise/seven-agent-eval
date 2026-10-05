@@ -1,5 +1,61 @@
 # 第五阶段进度：T12
 
+## 在线历史有界闭环 checkpoint（2026-10-05）
+
+在 `045c5ed` 离线硬切基线上完成本轮在线收尾，沿用 `codex/agent-rag-phase3`，不加旧实现兼容分支。**本轮约定的 T12 本机受控闭环已完成：索引历史 → 有序调度 → 冻结窗口 → 故障恢复 → 停服清理 → 导出/独立重开。** T13 安装发行、T14 真实生产、24 小时 soak 和生产 SLA 未验收，不用本机短测替代。
+
+### 交付与实际修复
+
+- 移除生产 `LiveManager.records`/assemblies 全历史 map；接收去重、单位首次事件时间/最新 revision、pending、judge 预算、OTLP 到期组装改为 SQLite 索引。批次最多 32 条/8 MiB，人工计划缓存 128、Run 序号缓存 128。
+- 报告按范围在磁盘冻结记录与 latest 标记；窗口、range 和 backlog 使用同一证据快照，复用 Processor reduce。固定窗口逐 Case 持久化，避免每 Case 重写全体事实；范围响应没有 Cases/facts，详情分页读取。
+- 新记录与复原记录先于 OTLP assembly 出现时，持久化 emission receipt 防止重放评分；停服清理保留 pending/在途关联快照，流式压缩正文，保留去重/过期身份及审计。
+- 当前上限见 `bounded-evaluation.md`：每范围最多 10,000 记录（包括 revision）、24h/1,440 窗口、窗口事实 4 MiB、响应 8 MiB；运行列表最多 1,024 项/8 MiB；清理预览每类身份最多 50,000、合计 64 MiB。超限明确失败，不截断分母。清理元数据和 journal/索引仍占磁盘，不宣称无限历史或恒定磁盘。
+- 真实万条验收中发现 SQLite 读锁导致 COMMIT 失败，底层事务未结束，重建随后 `cannot start a transaction within a transaction`。现已在失败提交后清理底层事务；真实双连接锁冲突验证已同步 ACK、释放读锁后重建/duplicate、待处理记录保留。Store 同样覆盖。诊断只写本地日志，API/页面仍安全码。
+- 增加 Run journal 尾读缓存时发现既有失败追加保护回归；已恢复失败后必须 reopen 的保护并重跑。测试预期中运行中断恢复为 partial，不误写成 completed。
+
+### 最终统一在线测量
+
+命令：`uv run --project sdk/python python scripts/online_capacity_acceptance.py`，退出 0；开始 2026-10-05 11:53:15Z，结束 12:01:55Z，约 520.3 秒。实际执行冻结二进制 SHA256 `b039845e1b9a55a7cb420b4a958aa9a6737d4aadd0407c3cc5dfbae90b0e966b`；最终 `make build` 摘要相同。
+
+机器 Apple M3 Pro、36 GiB、macOS 26.5.2/arm64。历史计划明确关闭 Evaluator/Processor/Conclusion；最近计划执行真实 Python+Node 每单位两项确定性指标，1 KiB 回答。历史占用、实际评分吞吐分开，不声称万条历史全部经过混合 worker。
+
+| 项目 | 实测 |
+|---|---:|
+| 历史单位 | 10,000，全部接收/完成；248.352 秒（输入＋历史评分） |
+| 最近单位 / 含 revision 总记录 | 130 / 10,131 |
+| 暂停上报 | 64 accepted / 1 QUEUE_FULL；ACK 后 SIGKILL、重启 duplicate 64 |
+| 64 积压有序恢复 | 9.350 秒，accepted 与 started 持久化序号顺序相同 |
+| 持续输入 | 60 条，1 event/s；60.637 秒；最大单条 ACK 12.196 ms |
+| 最近窗口 p50 / p95 评分延迟 | 628.423 / 12,764.921 ms（含暂停/排队，不是业务延迟） |
+| 历史前 / 1,000 / 10,000 后 daemon RSS | 35,831,808 / 49,086,464 / 51,658,752 B |
+| 历史前后三次温热最近范围查询 | 2.86–4.62 / 5.66–13.36 ms；固定最近 5 单位，有缓存 |
+| 100 ms 采样 daemon / worker合计 / 同时合计峰值 | 127,582,208 / 70,746,112 / 159,809,536 B |
+| 采样量 | 3,912；1,060 次观察到 worker；短命子进程峰值可能漏采 |
+| 10,000 历史完成后 journal / projection | 77,882,378 / 156,061,696 B |
+| exporter 断线业务入队 | 0.051 ms；发送1、重试6、丢弃0 |
+| 清理 | 10,131 记录 / 5 窗口；journal 78,927,104 → 7,938,929 B |
+| 最终窗口 | received=scored=130、pending=0；revision 替换旧贡献，旧快照不变 |
+
+峰值只覆盖 daemon 与其可观察后代，不是停服维护 CLI 的峰值，也不是全天 soak。温热范围查询不是万例首次物化耗时；索引重启仍顺序回放 journal，恢复时间不与历史独立。门槛 daemon<1 GiB、采样合计<2 GiB、历史 RSS 增长<128 MiB、温热查询<5 秒均通过；仅为此负载下的开发验证，不是 SLA。
+
+产物：`artifacts/t12-online/acceptance.json`、`window.seven.eval`、`report.html`。清理后旧事件仍 duplicate，新 revision 返回 DATA_EXPIRED，旧窗口 410。删除原 Package 后、Node/Python 指向不存在路径，独立查看器 Run 元数据、分页总数和完整两项指标一致。`verify` 再次退出 0。
+
+### 最终回归与页面证据
+
+- `make test` 退出 0：Go race core 163.669s/server 9.645s、TS SDK 5 项、React 11 项、Python 28 项、TypeScript/Vite 构建。随后只增加 Store 锁冲突及 OTLP compact replay 两项测试，连同 live 锁冲突单独 race 5.159s 退出 0，无产品代码变化。
+- `go vet ./...`、`make build`、`git diff --check` 退出 0；Vite 500 KiB chunk 警告仍是非阻断性能风险，未扩展成整页分包项目。
+- 当前二进制离线 acceptance、live acceptance、TS、comparison、HTTP RAG、Seven SSE 均退出 0；Seven 仅受控，真实环境 NOT_RUN。
+- `scripts/resilience_acceptance.py --cases 3 --seconds 2 --output artifacts/t12-online/resilience` 退出 0：混合/单语言小规模回归，64 backlog 11.075s、Subject 调用0、停服清理/无运行时重开通过。这是补充集成，不冒充另一轮百万测试。
+- 独立 Chromium `t12-online-indexed`：真实窗口 67 样本/7 异常，分页第三页、异常筛选、单条 false/缺失证据、受控敏感 500 安全反馈和局部重试、原生下载及 verify；390×844 长 ID 详情关闭/导出可达。桌面 1536×1024 / DPR 1，页面截图已读取复核。
+- 实际下载包在端口 51103 的无 Node/Python 查看器中重开；原服务与 Package 删除后依然可看第 67 样本、修订201、67/67、7异常，以及独立 HTML。它是小型页面验证包，与统一容量窗口的130单位区分。
+- 图片在 `output/playwright/t12-online/`；详细 Before/After/Why 与安全文案在 `docs/design/live-workspace-review.md`。沿用 frontend-product-design/React 技能复用 Ant Design 分页与异步详情，没有新统计/图表协议。未重做200%缩放、reduced-motion或全量原型1:1，不复用历史截图声称新验收。
+
+### 删除与交付边界
+
+统一容量专属临时目录在 finally 中先停精确所属进程再删除，`large_data_removed=true`；之前失败重跑的数据亦已清理。只保留小型测量、130单位窗口包/HTML及67单位浏览器包；没有保留万条历史 journal/SQLite/快照。本轮未重跑百万 Observation，其数据已在前一离线 checkpoint 删除。截图/运行产物继续忽略，不提交二进制。父任务拆分文档单独留在父仓库，不混入子仓库提交；没有推送。
+
+以下是 `045c5ed` 离线 checkpoint 与更早阶段的原记录，不覆盖本节的新在线结果。
+
 分支：`codex/agent-rag-phase3`。本轮从 `f204ca2` 继续，日期 2026-10-05（Asia/Singapore）。**本轮约定的离线大规模硬切闭环已完成：输入校验 → 执行 → 分批聚合 → 分页报告 → 分块包 → 无运行时重开，10,000 Case / 1,000,000 Observation 实测通过。** 不保留旧接口、旧状态或 1.0 包兼容层。T13/T14 与在线长期容量 SLA 不因此自动通过。
 
 ## 本轮交付

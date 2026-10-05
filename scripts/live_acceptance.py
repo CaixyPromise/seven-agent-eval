@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+from urllib.parse import quote
 import zipfile
 
 from seven_evaluate.basic import process, conclude
@@ -28,11 +29,24 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def request(base, path, body=None):
+def request(base, path, body=None, timeout=15):
     req = urllib.request.Request(base+path, data=None if body is None else json.dumps(body).encode(),
                                  headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=15) as res:
+    with urllib.request.urlopen(req, timeout=timeout) as res:
         return json.load(res)
+
+
+def window_full(base, window):
+    full = request(base, '/api/runs/'+window['id'])
+    cases, offset = [], 0
+    while True:
+        page = request(base, '/api/runs/'+window['id']+'/cases?offset='+str(offset)+'&limit=100')
+        for item in page['items']:
+            cases.append(request(base, '/api/runs/'+window['id']+'/cases/detail?case_id='+quote(item['id'],safe='')))
+        offset += len(page['items'])
+        if offset >= page['total']:
+            break
+    return {**full, 'cases': cases}
 
 
 def eventually(fn, timeout=40):
@@ -106,7 +120,7 @@ def main():
             proof['ack_sigkill_restart_duplicate'] = 'passed'
             request(base, '/api/live/plans/production/resume', {})
             eventually(lambda: report()['current']['scope']['pending'] == 0)
-            before = report()['current']
+            before = window_full(base, report()['current'])
             assert before['scope']['received'] == 3 and before['scope']['budget_exhausted'] == 2
             assert len({c['case']['id'] for c in before['cases']}) == 3
             assert before['scope']['p95_latency_ms'] < 999999
@@ -116,9 +130,9 @@ def main():
             ack = request(base, '/api/ingest/events', {'plan_id': 'production', 'events': [revised]})
             assert ack['accepted'] == 1
             eventually(lambda: report()['current']['scope']['pending'] == 0)
-            after = report()['current']
+            after = window_full(base, report()['current'])
             assert after['scope']['received'] == 3 and after['scope']['revision'] > before['scope']['revision']
-            assert request(base, '/api/live/windows/'+before['id']) == before
+            assert request(base, '/api/live/windows/'+before['id']) == {k:v for k,v in before.items() if k != 'cases'}
             proof['revision_replaces_contribution_and_frozen_snapshot'] = 'passed'
 
             daemon.kill()
@@ -134,7 +148,7 @@ def main():
             eventually(lambda: report()['current']['scope']['pending'] == 0)
             proof['exporter_outage_recovery'] = {'emit_ms': round(elapsed*1000, 3), 'sent': exporter.sent,
                                                 'retried': exporter.retried, 'dropped': exporter.dropped}
-            final = report()['current']
+            final = window_full(base, report()['current'])
             assert final['scope']['received'] == 5 and final['scope']['state'] == 'final'
             assert final['scope']['scored'] == 5
             summary = process({'cases': final['cases'], 'total': final['total'], 'window': final['scope'],

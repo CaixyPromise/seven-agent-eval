@@ -26,13 +26,13 @@ type ExpiredWindow struct {
 	End    time.Time `json:"end"`
 }
 
-func (m *LiveManager) expiredEventLocked(planID string, at time.Time) bool {
-	for _, scope := range m.expiredRanges {
-		if scope.PlanID == planID && !at.Before(scope.Start) && at.Before(scope.End) {
-			return true
-		}
+func (m *LiveManager) expiredEventLocked(planID string, at time.Time) (bool, error) {
+	if err := m.ensureProjectionLocked(); err != nil {
+		return false, err
 	}
-	return false
+	var count int
+	err := m.db.QueryRow("SELECT count(*) FROM live_expired WHERE plan=? AND start_ns<=? AND end_ns>?", planID, at.UnixNano(), at.UnixNano()).Scan(&count)
+	return count > 0, err
 }
 
 type RetentionPlan struct {
@@ -131,6 +131,10 @@ func (m *LiveManager) PreviewRetention(before time.Time) (RetentionPlan, error) 
 	if err != nil {
 		return p, err
 	}
+	records, assemblies, _, _, err := m.retentionViewLocked()
+	if err != nil {
+		return p, err
+	}
 	p.StateDigest = digest
 	windows := []Run{}
 	entries, err := os.ReadDir(filepath.Join(m.root, "windows"))
@@ -141,7 +145,7 @@ func (m *LiveManager) PreviewRetention(before time.Time) (RetentionPlan, error) 
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		body, err := ReadBounded(filepath.Join(m.root, "windows", entry.Name()), 64<<20)
+		body, err := ReadBounded(filepath.Join(m.root, "windows", entry.Name()), MaxMetadataBytes)
 		if err != nil {
 			return p, err
 		}
@@ -151,6 +155,11 @@ func (m *LiveManager) PreviewRetention(before time.Time) (RetentionPlan, error) 
 		}
 		if w.Scope == nil || entry.Name() != Digest(w.ID)+".json" {
 			return p, errors.New("invalid window snapshot")
+		}
+		w.Scope.Facts, w.Scope.BacklogFacts = nil, nil
+		w.Cases, w.Outputs, w.Conclusions, w.Catalogs = nil, nil, nil, nil
+		if len(windows) >= MaxRetentionIdentities {
+			return p, errors.New("retention window limit exceeded")
 		}
 		windows = append(windows, w)
 	}
@@ -163,14 +172,14 @@ func (m *LiveManager) PreviewRetention(before time.Time) (RetentionPlan, error) 
 			continue
 		}
 		safe := true
-		for _, r := range m.records {
+		for _, r := range records {
 			if inWindow(r, w) && !r.Expired && (r.Case == nil || r.ScoredAt == nil || !r.ScoredAt.Before(before)) {
 				safe = false
 				break
 			}
 		}
 		if safe {
-			for key, r := range m.records {
+			for key, r := range records {
 				if inWindow(r, w) && !r.Expired {
 					selected[key] = true
 				}
@@ -185,7 +194,7 @@ func (m *LiveManager) PreviewRetention(before time.Time) (RetentionPlan, error) 
 	}
 	for _, w := range windows {
 		eligible := w.Scope.Watermark.Before(before)
-		for key, r := range m.records {
+		for key, r := range records {
 			if inWindow(r, w) && !r.Expired && !selected[key] {
 				eligible = false
 			}
@@ -196,14 +205,14 @@ func (m *LiveManager) PreviewRetention(before time.Time) (RetentionPlan, error) 
 			protectRef(w)
 		}
 	}
-	for key, r := range m.records {
+	for key, r := range records {
 		if selected[key] {
 			p.Records = append(p.Records, key)
 		} else if !r.Expired {
 			p.Protected++
 		}
 	}
-	for key, a := range m.assemblies {
+	for key, a := range assemblies {
 		if a.ExpiredSpans != nil {
 			continue
 		}
@@ -211,7 +220,7 @@ func (m *LiveManager) PreviewRetention(before time.Time) (RetentionPlan, error) 
 		if source == "" {
 			source = "otlp"
 		}
-		recordKey := liveKey(a.PlanID, source, "otlp:"+a.Key+":"+Digest(a.Spans))
+		recordKey := liveKey(a.PlanID, source, "otlp:"+a.Key+":"+a.ContentDigest)
 		if selected[recordKey] && a.UpdatedAt.Before(before) {
 			p.Assemblies = append(p.Assemblies, key)
 		} else {
@@ -223,12 +232,20 @@ func (m *LiveManager) PreviewRetention(before time.Time) (RetentionPlan, error) 
 		return p, err
 	}
 	candidates := map[string]bool{}
+	selectedWindows := map[string]bool{}
+	for _, id := range p.Windows {
+		selectedWindows[id] = true
+	}
 	for _, r := range runs {
 		st, err := os.Stat(filepath.Join(m.Engine.Store.Root, "runs", r.ID, "events.jsonl"))
 		if err != nil {
 			return p, err
 		}
-		if (r.Status == "completed" || r.Status == "failed" || r.Status == "cancelled") && st.ModTime().Before(before) {
+		eligible := (r.Status == "completed" || r.Status == "failed" || r.Status == "cancelled") && st.ModTime().Before(before)
+		if r.Scope != nil {
+			eligible = selectedWindows[r.ID]
+		}
+		if eligible {
 			candidates[r.ID] = true
 		} else {
 			protectRef(r)
@@ -381,6 +398,10 @@ func (m *LiveManager) compactRetention(ctx context.Context, p RetentionPlan, aud
 	name := f.Name()
 	defer os.Remove(name)
 	defer f.Close()
+	_, _, expiredRanges, retentionAudits, err := m.retentionViewLocked()
+	if err != nil {
+		return err
+	}
 	seq := m.seq
 	write := func(ev liveJournal) error {
 		if ctx.Err() != nil {
@@ -402,24 +423,20 @@ func (m *LiveManager) compactRetention(ctx context.Context, p RetentionPlan, aud
 	if err = write(liveJournal{Type: "journal.compacted"}); err != nil {
 		return err
 	}
-	keys := make([]string, 0, len(m.records))
-	for key := range m.records {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		r := *m.records[key]
+	err = m.walkRecordsLocked(func(key string, record *liveRecord) error {
+		r := *record
 		if selected[key] {
 			r.Expired = true
 			r.Case = nil
 			r.Event.Case = Case{}
 			r.Event.Result = SubjectResult{}
 		}
-		if err = write(liveJournal{Type: "event.restored", Record: &r}); err != nil {
-			return err
-		}
+		return write(liveJournal{Type: "event.restored", Record: &r})
+	})
+	if err != nil {
+		return err
 	}
-	for key, a := range m.assemblies {
+	err = m.walkAssembliesLocked(func(key string, a otlpAssembly) error {
 		if assemblies[key] {
 			a.ExpiredSpans = map[string]string{}
 			for _, span := range a.Spans {
@@ -428,9 +445,10 @@ func (m *LiveManager) compactRetention(ctx context.Context, p RetentionPlan, aud
 			a.Spans = nil
 			a.Resource = nil
 		}
-		if err = write(liveJournal{Type: "otlp.updated", Assembly: &a}); err != nil {
-			return err
-		}
+		return write(liveJournal{Type: "otlp.updated", Assembly: &a})
+	})
+	if err != nil {
+		return err
 	}
 	for id, paused := range m.paused {
 		typ := "plan.resumed"
@@ -442,14 +460,14 @@ func (m *LiveManager) compactRetention(ctx context.Context, p RetentionPlan, aud
 		}
 	}
 	expiredWindows := map[string]bool{}
-	for id := range m.expiredWindows {
+	for id := range expiredRanges {
 		expiredWindows[id] = true
 	}
 	for _, id := range p.Windows {
 		expiredWindows[id] = true
 	}
 	for id := range expiredWindows {
-		scope, ok := m.expiredRanges[id]
+		scope, ok := expiredRanges[id]
 		if !ok {
 			body, e := ReadBounded(filepath.Join(m.root, "windows", Digest(id)+".json"), 64<<20)
 			if e != nil {
@@ -468,7 +486,7 @@ func (m *LiveManager) compactRetention(ctx context.Context, p RetentionPlan, aud
 			return err
 		}
 	}
-	for _, old := range m.retentionAudits {
+	for _, old := range retentionAudits {
 		if err = write(liveJournal{Type: "retention.applied", Retention: &old}); err != nil {
 			return err
 		}
@@ -493,12 +511,7 @@ func (m *LiveManager) compactRetention(ctx context.Context, p RetentionPlan, aud
 		m.journalFailure = err
 		return err
 	}
-	m.records = map[string]*liveRecord{}
-	m.assemblies = map[string]otlpAssembly{}
 	m.paused = map[string]bool{}
-	m.expiredWindows = map[string]bool{}
-	m.expiredRanges = map[string]ExpiredWindow{}
-	m.retentionAudits = nil
 	m.seq = 0
 	if err = m.rebuild(); err != nil {
 		m.journalFailure = err

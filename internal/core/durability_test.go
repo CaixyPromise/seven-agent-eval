@@ -3,6 +3,7 @@ package core
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"os"
@@ -33,6 +34,43 @@ func TestStoreFailedAppendRequiresReopen(t *testing.T) {
 	}
 	if err = s.Commit(&r, "run.started", nil); err == nil {
 		t.Fatal("failed journal accepted another write without recovery")
+	}
+}
+
+func TestStoreBusyCommitReleasesProjectionTransaction(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	reader, err := sql.Open("sqlite", filepath.Join(root, "index.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	tx, err := reader.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var n int
+	if err = tx.QueryRow("SELECT count(*) FROM runs").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	r := Run{SchemaVersion: Version, ID: "busy", Status: "running"}
+	var projectionErr *ProjectionError
+	if err = s.Commit(&r, "run.started", nil); !errors.As(err, &projectionErr) {
+		t.Fatalf("expected durable projection failure: %v", err)
+	}
+	if err = tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.rebuild(); err != nil {
+		t.Fatalf("transaction poisoned journal recovery: %v", err)
+	}
+	if got, err := s.Get(r.ID); err != nil || got.Status != "partial" || !strings.Contains(got.Message, "uncertain operations were not replayed") {
+		t.Fatalf("lost durable run: %+v %v", got, err)
 	}
 }
 
@@ -74,7 +112,7 @@ func TestDiskFailureDoesNotACKAndRestarts(t *testing.T) {
 	event := liveEvent("disk", 1, "hello")
 	m.appendRecord = failPartialAppend
 	got, err := m.Ingest(context.Background(), IngestBatch{PlanID: "production", Events: []ProductionEvent{event}})
-	if !errors.Is(err, syscall.ENOSPC) || got.Accepted != 0 || len(m.records) != 0 {
+	if !errors.Is(err, syscall.ENOSPC) || got.Accepted != 0 || len(testLiveRecords(t, m)) != 0 {
 		t.Fatalf("false ACK: %+v %v", got, err)
 	}
 	m.appendRecord = nil

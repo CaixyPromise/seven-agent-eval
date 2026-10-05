@@ -2,7 +2,6 @@ package core
 
 import (
 	"strconv"
-	"time"
 )
 
 type liveDecisionKey struct{}
@@ -10,11 +9,15 @@ type liveIdentityKey struct{}
 
 // Decisions are persisted before any evaluator starts. Recovery reuses the
 // reservation, so an interrupted evaluation cannot acquire a second budget slot.
-func (m *LiveManager) judgeDecisionsLocked(plan Run, record *liveRecord) map[string]string {
+func (m *LiveManager) judgeDecisionsLocked(plan Run, record *liveRecord) (map[string]string, error) {
 	decisions := map[string]string{}
+	if err := m.ensureProjectionLocked(); err != nil {
+		return nil, err
+	}
+	record.DecisionIdentities = map[string]string{}
 	cfg := plan.Effective.Plan.Stream
 	unit, _ := unitKey(plan.Effective.Plan, record.Event)
-	start := record.WindowTime.Truncate(time.Duration(cfg.WindowSeconds) * time.Second)
+
 	for _, ref := range plan.Effective.Evaluators {
 		var asset Asset
 		for _, a := range plan.Effective.Assets {
@@ -32,20 +35,11 @@ func (m *LiveManager) judgeDecisionsLocked(plan Run, record *liveRecord) map[str
 			decisions[ref] = "skipped"
 			continue
 		}
+		budgetIdentity := Digest([]any{ref, asset.Version, asset.Descriptor, plan.Effective.Plan.Parameters})
+		record.DecisionIdentities[ref] = budgetIdentity
 		used := 0
-		for _, prior := range m.records {
-			if prior.PlanID == record.PlanID && prior.WindowTime.Truncate(time.Duration(cfg.WindowSeconds)*time.Second).Equal(start) {
-				for _, decision := range prior.Decisions {
-					if decision == "selected" || decision == "interrupted" {
-						used++
-					}
-				}
-			}
-		}
-		for _, decision := range decisions {
-			if decision == "selected" {
-				used++
-			}
+		if err := m.db.QueryRow("SELECT count(*) FROM live_decisions WHERE plan=? AND start_ns=? AND identity=? AND decision IN ('selected','interrupted')", record.PlanID, record.WindowStart.UnixNano(), budgetIdentity).Scan(&used); err != nil {
+			return nil, err
 		}
 		if used >= *cfg.JudgePerWindowBudget {
 			decisions[ref] = "budget_exhausted"
@@ -53,5 +47,5 @@ func (m *LiveManager) judgeDecisionsLocked(plan Run, record *liveRecord) map[str
 			decisions[ref] = "selected"
 		}
 	}
-	return decisions
+	return decisions, nil
 }

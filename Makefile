@@ -36,3 +36,7 @@ acceptance-resilience: build
 .PHONY: acceptance-large
 acceptance-large: build
 	uv run --project sdk/python python scripts/large_acceptance.py
+
+.PHONY: acceptance-online-capacity
+acceptance-online-capacity: build
+	uv run --project sdk/python python scripts/online_capacity_acceptance.py

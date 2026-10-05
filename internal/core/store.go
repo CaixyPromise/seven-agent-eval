@@ -97,8 +97,21 @@ func (s *Store) commit(r *Run, eventType string, data any) error {
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		return e
 	}
-	ev := Event{Sequence: s.sequence[r.ID] + 1, Type: eventType, Time: time.Now().UTC(), Data: data}
+	sequence, cached := s.sequence[r.ID]
+	if !cached {
+		var err error
+		sequence, err = lastJournalSequence(filepath.Join(dir, "events.jsonl"))
+		if err != nil {
+			s.journalFailure = err
+			return err
+		}
+	}
+	ev := Event{Sequence: sequence + 1, Type: eventType, Time: time.Now().UTC(), Data: data}
 	projection := runMetadata(*r)
+	if eventType == "case.completed" && projection.Scope != nil {
+		projection.Scope = cloneScope(projection.Scope)
+		projection.Scope.Facts, projection.Scope.BacklogFacts = nil, nil
+	}
 	var delta *CaseResult
 	if eventType == "case.completed" {
 		c, ok := data.(CaseResult)
@@ -140,7 +153,7 @@ func (s *Store) commit(r *Run, eventType string, data any) error {
 		s.journalFailure = e
 		return e
 	}
-	s.sequence[r.ID] = ev.Sequence
+	s.rememberSequence(r.ID, ev.Sequence)
 	// The journal is durable first; both following stores can be reconstructed.
 	// During execution this file is a lightweight checkpoint. Get assembles
 	// complete cases from the SQLite projection; terminal checkpoints are full.
@@ -176,6 +189,10 @@ func (s *Store) Get(id string) (Run, error) {
 // The projection is transactional and entirely rebuildable from the journal.
 func (s *Store) project(r *Run, delta *CaseResult) error {
 	meta := runMetadata(*r)
+	if delta != nil && meta.Scope != nil {
+		meta.Scope = cloneScope(meta.Scope)
+		meta.Scope.Facts, meta.Scope.BacklogFacts = nil, nil
+	}
 	body, err := json.Marshal(meta)
 	if err != nil {
 		return err
@@ -201,7 +218,7 @@ func (s *Store) project(r *Run, delta *CaseResult) error {
 			return e
 		}
 	}
-	return tx.Commit()
+	return commitProjection(s.db, tx)
 }
 
 // List returns run metadata without loading every historical CaseResult.
@@ -209,16 +226,21 @@ func (s *Store) project(r *Run, delta *CaseResult) error {
 func (s *Store) List() ([]Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, e := s.db.Query("SELECT body FROM runs ORDER BY id DESC")
+	rows, e := s.db.Query("SELECT json_remove(body,'$.scope.facts','$.scope.backlog_facts') FROM runs ORDER BY id DESC LIMIT 1025")
 	if e != nil {
 		return nil, e
 	}
 	defer rows.Close()
 	out := []Run{}
+	bytes := 0
 	for rows.Next() {
 		var b []byte
 		if e = rows.Scan(&b); e != nil {
 			return nil, e
+		}
+		bytes += len(b)
+		if len(out) >= 1024 || bytes > MaxMetadataBytes {
+			return nil, errors.New("run list capacity exceeded; use a specific run or maintenance scope")
 		}
 		var r Run
 		if e = decodeJSON(b, &r); e != nil {
@@ -232,10 +254,11 @@ func (s *Store) List() ([]Run, error) {
 	return out, rows.Err()
 }
 func (s *Store) rebuild() error {
-	dirs, e := os.ReadDir(filepath.Join(s.Root, "runs"))
+	directory, e := os.Open(filepath.Join(s.Root, "runs"))
 	if e != nil {
 		return e
 	}
+	defer directory.Close()
 	// Projection rows are recreated from authoritative journals, including after index deletion.
 	if _, e = s.db.Exec("DELETE FROM runs"); e != nil {
 		return e
@@ -243,107 +266,116 @@ func (s *Store) rebuild() error {
 	if _, e = s.db.Exec("DELETE FROM run_cases"); e != nil {
 		return e
 	}
-	for _, dir := range dirs {
-		if !dir.IsDir() || !validID.MatchString(dir.Name()) {
-			continue
+	for {
+		dirs, readErr := directory.ReadDir(LiveReadBatch)
+		if readErr != nil && readErr != io.EOF {
+			return readErr
 		}
-		if s.expiredRun(dir.Name()) {
-			continue
+		if len(dirs) == 0 {
+			break
 		}
-		p := filepath.Join(s.Root, "runs", dir.Name(), "events.jsonl")
-		f, e := os.Open(p)
-		if e != nil {
-			if os.IsNotExist(e) {
+		for _, dir := range dirs {
+			if !dir.IsDir() || !validID.MatchString(dir.Name()) {
 				continue
-			} // A failed preparation may leave only an uncommitted source snapshot.
-			return e
-		}
-		reader := bufio.NewReader(f)
-		var r Run
-		var offset int64
-		seq := 0
-		tx, e := s.db.Begin()
-		if e != nil {
-			f.Close()
-			return e
-		}
-		defer tx.Rollback()
-		for {
-			line, err := readJournalLine(reader, MaxMetadataBytes)
-			if err == io.EOF {
-				break
 			}
-			if err != nil {
+			if s.expiredRun(dir.Name()) {
+				continue
+			}
+			p := filepath.Join(s.Root, "runs", dir.Name(), "events.jsonl")
+			f, e := os.Open(p)
+			if e != nil {
+				if os.IsNotExist(e) {
+					continue
+				} // A failed preparation may leave only an uncommitted source snapshot.
+				return e
+			}
+			reader := bufio.NewReader(f)
+			var r Run
+			var offset int64
+			seq := 0
+			tx, e := s.db.Begin()
+			if e != nil {
 				f.Close()
+				return e
+			}
+			defer tx.Rollback()
+			for {
+				line, err := readJournalLine(reader, MaxMetadataBytes)
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					f.Close()
+					return err
+				}
+				if len(line) > MaxMetadataBytes {
+					f.Close()
+					return errors.New("journal record too large")
+				}
+				var ev Event
+				if e = decodeJSON(line, &ev); e != nil {
+					f.Close()
+					return fmt.Errorf("corrupt journal %s", dir.Name())
+				}
+				if ev.Sequence != seq+1 {
+					f.Close()
+					return errors.New("journal sequence gap")
+				}
+				seq = ev.Sequence
+				if ev.Run != nil {
+					if e = decodeJSON(ev.Run, &r); e != nil {
+						f.Close()
+						return e
+					}
+					if r.SchemaVersion != Version || len(r.Cases) > 0 {
+						f.Close()
+						return errors.New("unsupported state format; remove old generated state")
+					}
+				} else if ev.Type == "case.completed" {
+					b, _ := json.Marshal(ev.Data)
+					var cr CaseResult
+					if e = decodeJSON(b, &cr); e != nil {
+						f.Close()
+						return e
+					}
+					if e = insertCase(tx, r.ID, r.Completed, cr, b); e != nil {
+						f.Close()
+						return e
+					}
+					r.Completed++
+				}
+				offset += int64(len(line))
+			}
+			f.Close()
+			if e = commitProjection(s.db, tx); e != nil {
+				return e
+			}
+			stat, err := os.Stat(p)
+			if err != nil {
 				return err
 			}
-			if len(line) > MaxMetadataBytes {
-				f.Close()
-				return errors.New("journal record too large")
-			}
-			var ev Event
-			if e = decodeJSON(line, &ev); e != nil {
-				f.Close()
-				return fmt.Errorf("corrupt journal %s", dir.Name())
-			}
-			if ev.Sequence != seq+1 {
-				f.Close()
-				return errors.New("journal sequence gap")
-			}
-			seq = ev.Sequence
-			if ev.Run != nil {
-				if e = decodeJSON(ev.Run, &r); e != nil {
-					f.Close()
+			if stat.Size() != offset {
+				if e = truncateJournal(p, offset); e != nil {
 					return e
 				}
-				if r.SchemaVersion != Version || len(r.Cases) > 0 {
-					f.Close()
-					return errors.New("unsupported state format; remove old generated state")
-				}
-			} else if ev.Type == "case.completed" {
-				b, _ := json.Marshal(ev.Data)
-				var cr CaseResult
-				if e = decodeJSON(b, &cr); e != nil {
-					f.Close()
+			}
+			if r.ID == "" {
+				continue
+			}
+			s.rememberSequence(r.ID, seq)
+			if r.Status == "running" || r.Status == "processing" {
+				r.Status = "partial"
+				r.Message = "Interrupted run recovered; uncertain operations were not replayed."
+				if e = s.commit(&r, "run.recovered", nil); e != nil {
 					return e
 				}
-				if e = insertCase(tx, r.ID, r.Completed, cr, b); e != nil {
-					f.Close()
+			} else {
+				if e = s.project(&r, nil); e != nil {
 					return e
 				}
-				r.Completed++
-			}
-			offset += int64(len(line))
-		}
-		f.Close()
-		if e = tx.Commit(); e != nil {
-			return e
-		}
-		stat, err := os.Stat(p)
-		if err != nil {
-			return err
-		}
-		if stat.Size() != offset {
-			if e = truncateJournal(p, offset); e != nil {
-				return e
-			}
-		}
-		if r.ID == "" {
-			continue
-		}
-		s.sequence[r.ID] = seq
-		if r.Status == "running" || r.Status == "processing" {
-			r.Status = "partial"
-			r.Message = "Interrupted run recovered; uncertain operations were not replayed."
-			if e = s.commit(&r, "run.recovered", nil); e != nil {
-				return e
-			}
-		} else {
-			if e = s.project(&r, nil); e != nil {
-				return e
-			}
-			if e = atomicJSON(filepath.Join(s.Root, "runs", r.ID, "result.json"), &r); e != nil {
-				return e
+				if e = atomicJSON(filepath.Join(s.Root, "runs", r.ID, "result.json"), &r); e != nil {
+					return e
+				}
 			}
 		}
 	}

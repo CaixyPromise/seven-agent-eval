@@ -8,9 +8,9 @@ import { useResource } from "../../api/useResource";
 import { ErrorNotice } from "../../components/Feedback";
 import { StatusBadge } from "../../components/StatusBadge";
 
-export function PagedSamples({runID,completed,onOpen}:{runID:string;completed:number;onOpen:(id:string)=>void}) {
+export function PagedSamples({runID,completed,onOpen,initialAnomalies=false}:{runID:string;completed:number;onOpen:(id:string)=>void;initialAnomalies?:boolean}) {
   const [page,setPage]=useState(1);
-  const [anomalies,setAnomalies]=useState(false);
+  const [anomalies,setAnomalies]=useState(initialAnomalies);
   const load=useCallback((signal:AbortSignal)=>evaluationApi.cases(runID,new URLSearchParams({offset:String((page-1)*25),limit:"25",anomalies:String(anomalies)}),signal),[runID,page,anomalies,completed]);
   const {data,loading,error,refresh}=useResource(load,"LOAD_CASES");
   const columns:ColumnsType<CaseSummary>=[

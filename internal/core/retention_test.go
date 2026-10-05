@@ -31,7 +31,7 @@ func TestRetentionReceiptsExportAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.scorePending(ctx)
-	report, err := m.Report(ctx, "production", time.Now().Add(-2*time.Hour), time.Now())
+	report, err := liveReport(t, m, ctx, "production", time.Now().Add(-2*time.Hour), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestRetentionReceiptsExportAndRecovery(t *testing.T) {
 	if len(p.Records) != 1 || len(p.Windows) != 1 {
 		t.Fatalf("preview: %+v", p)
 	}
-	if m.records[liveKey("production", event.Source, event.EventID)].Expired {
+	if testLiveRecords(t, m)[liveKey("production", event.Source, event.EventID)].Expired {
 		t.Fatal("preview deleted evidence")
 	}
 	if err = m.SaveRetentionPreview(p); err != nil {
@@ -58,7 +58,7 @@ func TestRetentionReceiptsExportAndRecovery(t *testing.T) {
 	if _, err = m.ApplyRetention(ctx, p.Digest); !errors.Is(err, syscall.ENOSPC) {
 		t.Fatal("failed compaction acknowledged", err)
 	}
-	if _, err = m.Window(ctx, window.ID); err != nil {
+	if _, err = liveWindow(t, m, ctx, window.ID); err != nil {
 		t.Fatal("failed compaction expired the old snapshot", err)
 	}
 	m.compactPublish = nil
@@ -70,7 +70,7 @@ func TestRetentionReceiptsExportAndRecovery(t *testing.T) {
 		t.Fatal("compacted projection missing", rows, err)
 	}
 	m = maintenance(t, e, m)
-	if _, err = m.Window(ctx, window.ID); !errors.Is(err, ErrDataExpired) {
+	if _, err = liveWindow(t, m, ctx, window.ID); !errors.Is(err, ErrDataExpired) {
 		t.Fatal("expired query", err)
 	}
 	ack, err := m.Ingest(ctx, IngestBatch{PlanID: "production", Events: []ProductionEvent{event}})
@@ -92,7 +92,7 @@ func TestRetentionReceiptsExportAndRecovery(t *testing.T) {
 		t.Fatal("expired range reopened", ack, err)
 	}
 	m.scorePending(ctx)
-	for _, r := range m.records {
+	for _, r := range testLiveRecords(t, m) {
 		if !r.Expired || r.Case != nil || r.Event.Result.Response != nil {
 			t.Fatal("payload retained or re-executed")
 		}
@@ -112,7 +112,7 @@ func TestRetentionPendingRevisionAndStalePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.scorePending(ctx)
-	if _, err := m.Report(ctx, "production", time.Now().Add(-2*time.Hour), time.Now()); err != nil {
+	if _, err := liveReport(t, m, ctx, "production", time.Now().Add(-2*time.Hour), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	a.EventID = "new-revision"
@@ -238,13 +238,13 @@ func TestRetentionOTLPReceipts(t *testing.T) {
 	if _, err = m.IngestOTLP(ctx, body); err != nil {
 		t.Fatal(err)
 	}
-	for key, a := range m.assemblies {
+	for _, a := range testLiveAssemblies(t, m) {
 		a.UpdatedAt = time.Now().Add(-time.Minute)
-		m.assemblies[key] = a
+		setTestAssembly(t, m, a)
 	}
 	m.flushOTLP(ctx)
 	m.scorePending(ctx)
-	if _, err = m.Report(ctx, "production", time.Now().Add(-2*time.Hour), time.Now()); err != nil {
+	if _, err = liveReport(t, m, ctx, "production", time.Now().Add(-2*time.Hour), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	m = maintenance(t, e, m)
@@ -266,7 +266,7 @@ func TestRetentionOTLPReceipts(t *testing.T) {
 	if err != nil || got.Duplicate != 1 {
 		t.Fatal("span receipts lost", got, err)
 	}
-	for _, a := range m.assemblies {
+	for _, a := range testLiveAssemblies(t, m) {
 		if len(a.Spans) != 0 || len(a.ExpiredSpans) == 0 {
 			t.Fatal("span payload retained")
 		}
