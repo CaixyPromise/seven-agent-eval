@@ -1,4 +1,69 @@
-# 第五阶段进度：T12
+# 第五阶段进度：T12–T13
+
+## 安装发行闭环 checkpoint（2026-10-06）
+
+在 `2f714af` 在线历史有界基线上完成 T13，沿用 `codex/agent-rag-phase3`。**本轮约定的安装闭环已完成：发行目录 → 最终位置安装 → 默认/HTTP/TS 评测 → 页面报告 → 浏览器下载 → 原 Package 删除 → 独立安装查看器重开。** macOS arm64 原生和 Debian arm64 容器均实际安装执行，容器不是仅交叉编译；独立物理第二机器和真实生产 T14 仍未验收。本节是当前状态；下面的 T12 记录保留其当时的范围，不以旧的“T13 未验收”覆盖本节。
+
+### 交付和运行边界
+
+- 新增 `install`、`doctor`、`uninstall`；CLI 优先从实际可执行文件（含符号链接）定位发行资源，不依赖执行目录或向上找到源码仓库。
+- 发行包包含 Go CLI/server、内置配方、协议、Python SDK、TS SDK/编译 worker、静态 UI、示例、使用说明和 Python 3.11 wheelhouse。依赖来自 `uv.lock`，安装使用离线 `--require-hashes`；不复制开发 `.venv`，不要求用户安装 Go、uv、pnpm 或 npm。
+- 执行模式仍需要外部 Python 3.11（含 venv/ensurepip），在最终安装位置创建环境；TS/JS 扩展额外需要 Node >=20.19。Node 缺失只影响相关资产，Python 资产/评测仍可用。安装完成后不能搬迁 venv；用户 Package 的逻辑引用可以搬迁。
+- `--viewer-only` 不创建语言环境、不探测/启动 worker；Go/SQLite/UI 可独立验证、导入并查询 2.0 结果包。继续硬切，不增加 1.0 兼容层。
+- Package、状态、导出禁止写入安装目录；安装不覆盖已有目录、不修改全局 PATH。失败保留 owned prefix/failed receipt，便于显式卸载。卸载逐项核对身份、摘要、目录和链接，遇新增/修改内容整目录保留；根目录、用户主目录、无所属 receipt 的目录及链接目标都拒绝删除。
+- Runtime probe 输出限制 4 KiB/15 秒；安装步骤有 5 分钟期限和子进程退出边界。安装错误给具体依赖/路径/资源修复提示，不等到业务调用后才变成模糊 worker 错误。
+- 开发入口扩展为 `make release`、`make acceptance-install`、`make acceptance-install-linux`；构建和安装验收脚本支持重复执行，不往源码示例写运行状态。
+
+### 当前源码验证
+
+| 检查 | 实际结果 |
+|---|---|
+| `make test` | 退出 0；Go race core 120.479s，distribution/server 缓存通过；TS SDK 5、React 11、Python 28 项；TS 类型检查和 Vite 构建通过 |
+| `go vet ./...`、`make build`、`git diff --check` | 均退出 0 |
+| 新安装模块独立 race | 退出 0；安装/重装/只查看、资源损坏、路径/符号链接、失败前缀、只读父目录、额外用户内容、根/主目录拒绝及 probe 限制 |
+| 三份新增 Python 脚本 Ruff check | 退出 0；不添加项目运行依赖 |
+| `python3 scripts/acceptance.py` | 退出 0；replay、实际 HTTP 1 次、reference 不泄漏、原 Package 删除后 verify |
+| `scripts/typescript_acceptance.py`（通过 `uv run --project sdk/python python`） | 退出 0；Python/TS 等价、5/5、100%、2 异常、无运行时重开 |
+| `scripts/comparison_acceptance.py`（同上） | 退出 0；3 候选/15 调用、参数回执、配对/缺失语义及完整迁移 |
+| `scripts/live_acceptance.py`（同上） | 退出 0；ACK/SIGKILL/重启/duplicate、预算、revision、exporter、封闭窗口复算及独立重开 |
+| `seven-eval verify output/playwright/t13-install/final-browser.seven.eval` | 退出 0；浏览器原生下载的 2.0 包有效 |
+
+`artifacts/t13/regression.log` 保留完整测试输出。Vite 的 535.93/843.39 KiB chunk 警告仍为非阻断性能风险，没有扩入分包重构。本轮不重做百万容量、24 小时 soak、200% zoom、reduced-motion 或完整视觉矩阵；不借历史截图把这些写成新验收。
+
+系统授权恢复后的最终专项/回归：`go test -race ./internal/distribution -count=1` 退出 0（2.536s）；`go test -race ./...` 退出 0（core 116.270s，distribution/server 缓存通过），完整输出在 `artifacts/t13/go-regression-final.log`；`go vet ./...`、新增脚本 Ruff check、工作区/staged `git diff --check` 均退出 0。产品 Go/Python/TS/React 源码未在此前页面验证之后改变，本次额外修正的是验收脚本的固定镜像缓存/拉取边界与进度记录。
+
+### 从安装产物验收，不用开发 CLI 代替
+
+构建：`python3 scripts/package_release.py --python /path/to/external/python3.11`；Linux 额外 `--os linux --arch arm64`。实际构建解释器是 uv 管理的外部 CPython 3.11.14，不是 SDK `.venv`。macOS/Linux tar.gz 和对应 `.sha256` 在 `artifacts/t13/releases/`；各资源有 manifest 摘要。SHA256 用于完整性，不代替发行者签名。
+
+原生验收：`python3 scripts/installation_acceptance.py --archive artifacts/t13/releases/seven-agent-eval-darwin-arm64.tar.gz --python /path/to/external/python3.11 --output artifacts/t13/darwin-arm64`。
+
+Linux 验收：`python3 scripts/installation_linux.py --viewer-bundle output/playwright/t13-install/final-browser.seven.eval`。只向容器复制发行包和独立 stdlib 验收脚本，不挂载源码；执行/查看时均使用 `--network none`。镜像按 digest 固定，环境摘要记录在 `environment.json` 和 `runtime-free-viewer.json`。
+
+收尾曾因 Docker daemon 停止退出 1，未创建容器；启动时等待 macOS 管理员授权配置 privileged port mapping。用户在本机完成授权后，确认 `linux/aarch64`，重新执行整条安装/执行/重装/卸载及无运行时查看器流程，退出 0。没有代输凭据、修改 Docker 安全配置或绕过授权。另一次无运行时镜像拉取等待被显式终止；现优先检查固定 digest 的本地镜像，缺失才限时拉取（180 秒），完整重跑退出 0。最终记录由本次执行覆盖，日志为 `linux-validation-cache.log`；不借较早 PASS 代替最终产物重验。
+
+| 环境 | 状态和证据 |
+|---|---|
+| macOS 26.5.2 / Apple M3 Pro / arm64；Python 3.11.14、Node 20.19.5 | PASS：含空格最终位置、可执行文件链接、default/replay、真实受控 HTTP、TS Processor、Package 移动、缺 Node 的 Python 执行、资源缺失拒绝、重装/卸载；所有命令不传 `--home` |
+| Debian bookworm / linux arm64 容器；Python 3.11.17、Node 20.19.5 | PASS：默认、HTTP、TS、重装/卸载；无源码挂载、执行禁外网。不是仅交叉编译，也不是独立物理机器 |
+| 独立 Debian bookworm arm64 容器，无 Python/Node | PASS：先检查运行时不存在、安装 viewer，再重开 macOS 浏览器下载包；完整 Run/CaseResult/HTML 一致，无源码/Package 挂载，禁外网 |
+| 独立物理第二机器、Windows、macOS x86_64、Linux x86_64 | NOT_RUN：不声明支持/跨机器安装通过 |
+
+小型产物：`artifacts/t13/darwin-arm64/{acceptance.json,demo.seven.eval,typescript.seven.eval,report.html}`，`artifacts/t13/linux-arm64/{acceptance.json,environment.json,runtime-free-viewer.json}`。脚本的 `browser: NOT_RUN` 是接口验收边界，不用它代替下面的真实页面记录。
+
+### 安装版真实页面与迁移
+
+- 独立 Chromium 155/DPR 1，桌面 1536×1024：安装版发现页运行 `typescript`，观察完成 5/5、覆盖率 100%、2 异常；“处理器输出”确认为 `team-summary@2.0.0`、显式 KPI 指针和实际 data，自定义结论可见。
+- 从“导出结果”触发原生下载；实际文件 `output/playwright/t13-install/final-browser.seven.eval`，Run `20261005T202015-f0e20076ce328292`。不是用预制 JSON 冒充页面导出。
+- 停止原执行服务并删除受控 Package 后，在另一个安装 prefix、没有 `.venv`，且 Python/Node/PATH 指向不存在位置的查看器中，经“导入结果 → 选择文件 → 导入并查看”重开同一包。逐项核对完整 Run（含配置、码表、输出、结论）和每个 CaseResult，独立 HTML 包含自定义统计及 `TEAM_REVIEW`。
+- 390×844：安装执行页及独立查看器均通过样本 ID 打开 `false`；Drawer x=0/width=390、关闭/Escape 可用；false/0/null 和不适用/证据不足不混为零。等待真实布局动画结束后截图，未把调整视口时的过渡画面当作成功证据。
+- 当前截图已读取复核：`final-ts-report-desktop.png`、`final-ts-processor.png`、`final-ts-detail-mobile.png`、`final-independent-viewer.png`、`final-viewer-detail-mobile.png`，均在 `output/playwright/t13-install/`。本轮复用现有 Ant Design 页面，没有扩张 UI 或统计协议。
+
+### 清理、checkpoint 与后续
+
+原生验收的 temporary Package、venv 和状态在 finally 中先停所属服务再清理，`temporary_data_removed=true`；浏览器专属服务/目录亦已清理，测试容器在 finally 精确删除。仅保留本地发行包、小型结果/HTML、日志和截图；Docker/Playwright 的工具镜像/浏览器缓存不是百万测试数据，本轮没有删除共享缓存。未重跑百万 Observation，前一轮百万数据删除结论保持不变。
+
+本地 checkpoint：`feat: deliver installable evaluation distribution`。只提交本阶段源码/测试/脚本/文档，父任务文档单独留在父仓库；运行产物继续忽略，不发布/不推送。从 checkpoint 重新构建发行包，manifest 记录该提交，刷新 macOS/Linux 验收及 archive SHA256；记录与发行包摘要相符才作为最终交付。安装说明见 `docs/installation.md`。T14 仍需明确的真实 Seven、非 Seven RAG 和生产事件来源；容器和受控 HTTP 不代替真实模型质量/真实生产验收。Apple Developer ID 签名/notarization、自动升级、其余 OS/架构和长时生产 SLA 均不在本轮通过声明内。
 
 ## 在线历史有界闭环 checkpoint（2026-10-05）
 

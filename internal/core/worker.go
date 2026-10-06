@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"seven-agent-eval/internal/distribution"
 	"time"
 )
 
@@ -46,6 +47,11 @@ func (w Worker) Call(ctx context.Context, method string, params any, out any) er
 	cmd := exec.CommandContext(ctx, w.Python, "-m", "seven_evaluate.worker")
 	if p, ok := params.(map[string]any); ok {
 		if path, ok := p["path"].(string); ok && nodeScript(path) {
+			if method == "describe" {
+				if _, err := distribution.Node(ctx, w.Node); err != nil {
+					return err
+				}
+			}
 			copy := cloneMap(p)
 			var cleanup func()
 			var err error
@@ -71,7 +77,7 @@ func (w Worker) Call(ctx context.Context, method string, params any, out any) er
 	if source == "" {
 		source = filepath.Join(w.Home, "sdk", "python", "src")
 	}
-	cmd.Env = append(os.Environ(), "PYTHONPATH="+source)
+	cmd.Env = append(os.Environ(), "PYTHONPATH="+source, "PYTHONDONTWRITEBYTECODE=1")
 	cmd.Stdin = &input
 	stdout := &boundedBuffer{max: 8 << 20}
 	stderr := &boundedBuffer{max: 64 << 10}

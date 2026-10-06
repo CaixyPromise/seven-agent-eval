@@ -40,3 +40,15 @@ acceptance-large: build
 .PHONY: acceptance-online-capacity
 acceptance-online-capacity: build
 	uv run --project sdk/python python scripts/online_capacity_acceptance.py
+
+.PHONY: release acceptance-install acceptance-install-linux
+RELEASE_PYTHON ?= python3.11
+RELEASE_OS ?= $(shell go env GOOS)
+RELEASE_ARCH ?= $(shell go env GOARCH)
+release: build
+	python3 scripts/package_release.py --python "$(RELEASE_PYTHON)" --os "$(RELEASE_OS)" --arch "$(RELEASE_ARCH)"
+acceptance-install: release
+	python3 scripts/installation_acceptance.py --archive "artifacts/t13/releases/seven-agent-eval-$(RELEASE_OS)-$(RELEASE_ARCH).tar.gz" --python "$(RELEASE_PYTHON)" --output "artifacts/t13/$(RELEASE_OS)-$(RELEASE_ARCH)"
+acceptance-install-linux: build
+	python3 scripts/package_release.py --python "$(RELEASE_PYTHON)" --os linux --arch arm64
+	python3 scripts/installation_linux.py

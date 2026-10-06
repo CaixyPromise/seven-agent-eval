@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"seven-agent-eval/internal/core"
+	"seven-agent-eval/internal/distribution"
 	"seven-agent-eval/internal/server"
 	"syscall"
 	"time"
@@ -23,6 +24,9 @@ func homeDefault() string {
 	}
 	candidates := []string{}
 	if exe, e := os.Executable(); e == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
 		candidates = append(candidates, filepath.Dir(exe))
 	}
 	if wd, e := os.Getwd(); e == nil {
@@ -30,6 +34,9 @@ func homeDefault() string {
 	}
 	for _, start := range candidates {
 		for p := start; ; p = filepath.Dir(p) {
+			if distribution.Managed(p) {
+				return p
+			}
 			if _, e := os.Stat(filepath.Join(p, "sdk/python/pyproject.toml")); e == nil {
 				return p
 			}
@@ -58,7 +65,7 @@ func run() error {
 	}
 	args := fs.Args()
 	if len(args) == 0 {
-		return errors.New("usage: seven-eval [--package DIR] [--json] init|discover|plan inspect|run|serve|export|verify|retention")
+		return errors.New("usage: seven-eval [--package DIR] [--json] init|discover|plan inspect|run|serve|export|verify|retention|install|uninstall|doctor")
 	}
 	// --json is also accepted after read-only subcommands.
 	cleaned := []string{}
@@ -71,6 +78,80 @@ func run() error {
 	}
 	args = cleaned
 	cmd := args[0]
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if cmd == "install" {
+		installFlags := flag.NewFlagSet("install", flag.ContinueOnError)
+		python := installFlags.String("python", "", "external Python 3.11 executable; environment is created in final install location")
+		viewer := installFlags.Bool("viewer-only", false, "install viewer without Python or Node")
+		if err := installFlags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if installFlags.NArg() != 1 {
+			return errors.New("usage: install [--python /path/to/python3.11 | --viewer-only] DIRECTORY")
+		}
+		r, err := distribution.Install(ctx, *home, installFlags.Arg(0), distribution.Options{Python: *python, ViewerOnly: *viewer})
+		if err != nil {
+			return err
+		}
+		printJSON(map[string]any{"status": r.Status, "mode": r.Mode, "installation": r.Prefix, "binary": filepath.Join(r.Prefix, "bin/seven-eval")})
+		return nil
+	}
+	if cmd == "uninstall" {
+		if len(args) != 2 {
+			return errors.New("usage: uninstall EXACT-INSTALL-DIRECTORY")
+		}
+		if err := distribution.Uninstall(args[1]); err != nil {
+			return err
+		}
+		fmt.Println("Removed owned installation; external Packages and results were not touched:", args[1])
+		return nil
+	}
+	if cmd == "doctor" {
+		viewer := len(args) == 2 && args[1] == "--viewer-only"
+		if len(args) > 2 || (len(args) == 2 && !viewer) {
+			return errors.New("usage: doctor [--viewer-only]")
+		}
+		h, err := distribution.Doctor(ctx, *home, viewer)
+		if err != nil {
+			return err
+		}
+		printJSON(h)
+		return nil
+	}
+	// An installed build fails resource validation before any business call. The
+	// viewer intentionally performs no language-runtime probes.
+	if distribution.Managed(*home) {
+		var err error
+		if _, err = distribution.Validate(*home); err != nil {
+			return err
+		}
+		if cmd == "run" || (cmd == "serve" && len(args) == 1) {
+			if _, err = distribution.Doctor(ctx, *home, false); err != nil {
+				return err
+			}
+		}
+		if cmd == "init" && len(args) == 2 {
+			if err = distribution.Outside(*home, args[1]); err != nil {
+				return err
+			}
+		}
+		if cmd == "export" && len(args) == 3 {
+			if err = distribution.Outside(*home, args[2]); err != nil {
+				return err
+			}
+		}
+		if cmd != "verify" && cmd != "init" {
+			if err = distribution.Outside(*home, *pkg); err != nil {
+				return err
+			}
+			if *state != "" {
+				if err = distribution.Outside(*home, *state); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if cmd == "init" {
 		if len(args) != 2 {
 			return errors.New("usage: init DIRECTORY")
@@ -92,8 +173,6 @@ func run() error {
 		printJSON(map[string]any{"valid": true, "run_id": r.ID, "status": r.Status})
 		return nil
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	root, err := core.FindPackage(*pkg)
 	viewing := cmd == "serve" && len(args) == 2
 	if err != nil {

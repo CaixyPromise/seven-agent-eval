@@ -1,8 +1,8 @@
 # Seven Agent Eval
 
-Independent Go + Python + React monorepo for portable, evidence-based Agent/RAG evaluation.
-Phase 1 delivers offline HTTP invocation, historical-result evaluation, package discovery,
-replaceable default evaluations/statistics/conclusions, a local UI and `.seven.eval` reports.
+Independent Go + Python + TypeScript + React monorepo for portable, evidence-based Agent/RAG evaluation.
+It provides offline invocation/history evaluation, continuous event scoring, explicit candidate
+comparison, replaceable evaluations/statistics/conclusions, a local UI and portable `.seven.eval` reports.
 
 ## Prepare and build
 
@@ -17,7 +17,9 @@ python3 scripts/acceptance.py
 ```
 
 The developer setup installs the Python worker (including default evaluators), frontend dependencies
-and UI build. It does not need model credentials. Full cross-platform installer packaging is T13.
+and UI build. It does not need model credentials. For directory distributions, offline installation,
+runtime diagnostics and a Python/Node-free viewer, see [Installation](docs/installation.md).
+Actual native/container platform validation is recorded in [Phase 5 progress](docs/phase5-progress.md).
 
 ## Try the report
 

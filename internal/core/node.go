@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"seven-agent-eval/internal/distribution"
 	"strings"
 	"sync"
 
@@ -98,7 +99,7 @@ func (w Worker) nodeCommand(ctx context.Context, params map[string]any) (*exec.C
 		node = "node"
 	}
 	if _, err := exec.LookPath(node); err != nil {
-		return nil, nil, errors.New("Node runtime unavailable; configure SEVEN_EVAL_NODE")
+		return nil, nil, errors.New("NODE_UNAVAILABLE: TS/JS extensions require Node >=20.19; configure SEVEN_EVAL_NODE; Python assets and result viewing remain available")
 	}
 	path, _ := params["path"].(string)
 	runtime := filepath.Join(w.Home, "sdk/typescript/dist/worker.mjs")
@@ -228,11 +229,11 @@ func (e *Engine) freezeNode(ctx context.Context, r *Run) error {
 	if node == "" {
 		node = "node"
 	}
-	version, err := exec.CommandContext(ctx, node, "--version").Output()
+	version, err := distribution.Node(ctx, node)
 	if err != nil {
-		return errors.New("Node runtime unavailable")
+		return err
 	}
-	r.Effective.NodeRuntime = &NodeRuntime{SnapshotID: id, Version: strings.TrimSpace(string(version))}
+	r.Effective.NodeRuntime = &NodeRuntime{SnapshotID: id, Version: "v" + version}
 	return nil
 }
 
