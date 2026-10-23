@@ -86,14 +86,9 @@ p {
 .brand-mark {
   height: 38px;
   width: 38px;
-  border-radius: 8px;
-  color: white;
-  background: var(--color-primary);
-  display: grid;
-  place-items: center;
-  font-size: 29px;
-  font-style: italic;
-  font-weight: 600;
+  flex: 0 0 auto;
+  display: block;
+  object-fit: contain;
 }
 .sidebar nav {
   margin-top: 34px;
@@ -602,7 +597,6 @@ pre {
   .brand-mark {
     width: 32px;
     height: 32px;
-    font-size: 25px;
   }
   .sidebar nav {
     margin-top: 12px;

@@ -10,6 +10,7 @@
 | 示例与测试 | `examples/`、`testdata/`、测试源码 | 合成问答、工具与 SSE/OTLP fixtures；确认不含真实客户数据 |
 | 文档与开发入口 | `docs/`、`scripts/`、根文档、Makefile、CI、锁文件 | 用法、设计与历史验收记录；包含受控验证的性能记录 |
 | 两张设计图 | `docs/design/blue-workspace-prototype.png`、`docs/design/live-workspace-prototype.png` | 原型而非实际产品截图；确认图像来源与可发布权利 |
+| 品牌 SVG | `web/src/assets/seven-agent-symbol.svg`、`web/public/favicon.svg` | 按所有者要求接入品牌库 v1.1.0；保留图形与配色，不授予商标使用权 |
 | Git 历史 | 当前本地分支可达提交 | 保留作者/邮箱；包含已删除的旧合成结果包，详情见下文 |
 
 用户运行状态、venv、node_modules、凭据、下载产物、百万测试数据和安装验收生成包不纳入当前树。

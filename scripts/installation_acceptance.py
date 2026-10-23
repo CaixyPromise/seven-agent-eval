@@ -313,7 +313,23 @@ def main():
                 assert "team-summary@2.0.0" in html and "TEAM_REVIEW" in html
             (output / "report.html").write_text(html)
             with urllib.request.urlopen(address) as response:
-                assert b"<html" in response.read()
+                index_html = response.read()
+                assert b"<html" in index_html and b"/favicon.svg" in index_html
+            # Exercise assets from the installed viewer, without the source tree.
+            assets = viewer_prefix / "web/dist/assets"
+            symbols = list(assets.glob("seven-agent-symbol-*.svg"))
+            assert len(symbols) == 1, "installed brand symbol missing or ambiguous"
+            symbol = symbols[0]
+            assert any(
+                symbol.name.encode() in script.read_bytes()
+                for script in assets.glob("*.js")
+            ), "built UI does not reference the brand symbol"
+            for path, expected_body in [
+                ("/assets/" + symbol.name, symbol.read_bytes()),
+                ("/favicon.svg", (viewer_prefix / "web/dist/favicon.svg").read_bytes()),
+            ]:
+                with urllib.request.urlopen(address + path) as response:
+                    assert response.status == 200 and response.read() == expected_body
             # Modified/added user content stops uninstall instead of deleting it.
             user_file = prefix / "user-notes.txt"
             user_file.write_text("keep me")
@@ -353,6 +369,8 @@ def main():
                 "user_content_preserved": True,
                 "reinstall": not bool(args.browser_workspace),
                 "browser": "NOT_RUN by this script",
+                "brand_assets_served": True,
+                "brand_symbol": symbol.name,
             }
             if args.browser_workspace:
                 browser_package = root / "browser-package"

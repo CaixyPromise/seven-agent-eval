@@ -11,6 +11,7 @@ import {
   Folder,
 } from "lucide-react";
 import type { Route } from "./routes";
+import brandSymbol from "../assets/seven-agent-symbol.svg";
 const navigation = [
   {
     key: "plans",
@@ -59,7 +60,7 @@ export function WorkspaceShell({
       </a>
       <aside className="sidebar">
         <a className="brand" href="#/plans">
-          <span className="brand-mark">7</span>
+          <img className="brand-mark" src={brandSymbol} alt="" width={38} height={38} />
           <span>Seven Eval</span>
         </a>
         <nav aria-label="主导航">
