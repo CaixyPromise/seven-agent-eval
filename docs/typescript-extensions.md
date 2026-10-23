@@ -16,10 +16,12 @@ export default processor({ id: "team-summary", version: "2.0.0" }, ctx => {
     processor: "team-summary@2.0.0",
     input_digest: ctx.input_digest,
     data: ctx.state,
-    report: { version: "1", kpis: { scored: "/count" } },
   };
 });
 ```
+
+此示例只计算处理过的 Case 数，因此不声明 scored KPI。已评分量应统计具有
+`status: observed` 指标的 Case；完整 KPI 实现见 `examples/typescript/processors/team.ts`。
 
 在计划中设置 `processors: [processor:team-summary]` 替换默认统计；省略继承，`[]` 关闭。完整可运行示例是 `examples/typescript`：`typescript`、`python` 对照计划，`missing` 关闭统计，`conflict` 演示两个首页 KPI 来源。
 

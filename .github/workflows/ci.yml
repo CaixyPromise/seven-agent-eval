@@ -40,6 +40,7 @@ jobs:
       - run: python3 scripts/acceptance.py
       - run: uv run --project sdk/python python scripts/phase3_acceptance.py
       - run: uv run --project sdk/python python scripts/typescript_acceptance.py
+      - run: python3 scripts/skill_acceptance.py
       - run: uv run --project sdk/python python scripts/comparison_acceptance.py
       - run: uv run --project sdk/python python scripts/live_acceptance.py
       - run: uv run --project sdk/python python scripts/seven_acceptance.py

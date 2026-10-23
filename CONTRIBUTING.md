@@ -20,6 +20,7 @@ make acceptance-rag
 make acceptance-typescript
 make acceptance-compare
 make acceptance-live
+make acceptance-skill
 ```
 
 Tests use controlled loopback targets and synthetic inputs. `make acceptance-seven` tests
@@ -29,6 +30,9 @@ do not add million-observation workloads to PR CI.
 Run `python3 scripts/public_content_check.py` and `git diff --check` before review.
 The CI uses read-only permissions, pinned actions and no publishing credentials.
 For clean-source and installed-package checks see [release preparation](docs/open-source-readiness.md).
+For AI-assisted extension development, read the portable [SDK Skill](skills/seven-eval-sdk/SKILL.md)
+and [setup guide](docs/ai-development.md). Keep templates aligned with the SDK contract and run
+`make acceptance-skill` when changing them. The selected release candidate is `v0.1.0-alpha.1`.
 
 ## Change expectations
 

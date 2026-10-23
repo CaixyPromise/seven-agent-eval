@@ -1,15 +1,15 @@
-# 首发公开范围审阅
+# 已确认的首发公开范围
 
 2026-10-24：Apache-2.0 和署名 CaixyPromise 已确认，允许保留历史作者与邮箱。
-以下是拟公开范围；未执行公开。请所有者确认材料权利，或指出需要排除的路径。
+所有者已确认下列公开范围，两张原型图保留；尚未执行公开。
 
-| 内容 | 路径 | 用途与需确认事项 |
+| 内容 | 路径 | 用途与范围 |
 |---|---|---|
-| 产品实现 | `cmd/`、`internal/`、`builtin/`、`web/` | CLI、执行与实时核心、默认配方及 UI；确认拥有公开授权 |
+| 产品实现 | `cmd/`、`internal/`、`builtin/`、`web/` | CLI、执行与实时核心、默认配方及 UI；已获准公开 |
 | 扩展与协议 | `sdk/`、`protocol/` | Python/TS SDK、schemas、合成 conformance；保留第三方各自许可证 |
-| 示例与测试 | `examples/`、`testdata/`、测试源码 | 合成问答、工具与 SSE/OTLP fixtures；确认不含真实客户数据 |
-| 文档与开发入口 | `docs/`、`scripts/`、根文档、Makefile、CI、锁文件 | 用法、设计与历史验收记录；包含受控验证的性能记录 |
-| 两张设计图 | `docs/design/blue-workspace-prototype.png`、`docs/design/live-workspace-prototype.png` | 原型而非实际产品截图；确认图像来源与可发布权利 |
+| 示例与测试 | `examples/`、`testdata/`、测试源码 | 合成问答、工具与 SSE/OTLP fixtures；按已确认范围公开 |
+| 文档与开发入口 | `docs/`、`scripts/`、`skills/`、根文档、Makefile、CI、锁文件 | 用法、SDK 开发 Skill、设计与历史验收记录 |
+| 两张设计图 | `docs/design/blue-workspace-prototype.png`、`docs/design/live-workspace-prototype.png` | 所有者确认保留；原型而非实际产品截图 |
 | 品牌 SVG | `web/src/assets/seven-agent-symbol.svg`、`web/public/favicon.svg` | 按所有者要求接入品牌库 v1.1.0；保留图形与配色，不授予商标使用权 |
 | Git 历史 | 当前本地分支可达提交 | 保留作者/邮箱；包含已删除的旧合成结果包，详情见下文 |
 
@@ -29,7 +29,8 @@ Gitleaks 全历史扫描无命中；历史 ZIP 另行展开扫描无命中。
 
 ## 账户与反馈
 
-本机 gh 配置账户 CaixyPromise，当前认证无效（API 401）。后续可由所有者重新登录；
-本轮不创建仓库或推送。仓库名建议 `seven-agent-eval`，实际远程地址待创建后验证。
-私密漏洞渠道待所有者指定邮箱，或仓库创建后启用并验证 private vulnerability reporting。
-现有提交邮箱不自动充当安全联系地址。
+2026-10-24 重新检查 gh 登录成功，API 返回账户 CaixyPromise。目标仓库已确定为
+`CaixyPromise/seven-agent-eval`；当日查询该仓库返回 404，本地未配置 remote。
+此前 API 401 是历史状态，现已恢复。当前只进行本地准备。
+私密漏洞渠道已选 GitHub private vulnerability reporting；仓库创建后需启用并验证，
+尚未宣称渠道可用。现有提交邮箱不充当安全联系地址。

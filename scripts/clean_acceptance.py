@@ -33,7 +33,7 @@ def main():
         "status": "running",
         "scope": "clean index export; existing system toolchains and download caches",
         "browser": "NOT_RUN",
-        "license": "PENDING_OWNER_DECISION",
+        "license": "Apache-2.0",
     }
     environment = {
         k: v
@@ -135,6 +135,10 @@ def main():
                         "python",
                         "scripts/typescript_acceptance.py",
                     ],
+                ),
+                (
+                    "skill",
+                    ["python3", "scripts/skill_acceptance.py"],
                 ),
                 (
                     "compare",

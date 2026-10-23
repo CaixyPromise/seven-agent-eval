@@ -57,3 +57,7 @@ acceptance-install-linux: build
 .PHONY: acceptance-clean
 acceptance-clean:
 	python3 scripts/clean_acceptance.py --python "$(RELEASE_PYTHON)"
+
+.PHONY: acceptance-skill
+acceptance-skill: build
+	python3 scripts/skill_acceptance.py

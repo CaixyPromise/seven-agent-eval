@@ -294,6 +294,9 @@ def main():
                 return process, address
 
             _, address = serve(viewer_binary, root / "viewer-state", bundle, no_runtime)
+            installed_skill = viewer_prefix / "skills/seven-eval-sdk"
+            for relative in ["SKILL.md", "references/sdk-contract.md", "assets/team_summary.py", "assets/team_summary.ts"]:
+                assert (installed_skill / relative).read_bytes() == (source / "skills/seven-eval-sdk" / relative).read_bytes()
             base = address + "/api/runs/" + expected["id"]
             with urllib.request.urlopen(base) as response:
                 assert json.load(response) == {
@@ -371,6 +374,7 @@ def main():
                 "browser": "NOT_RUN by this script",
                 "brand_assets_served": True,
                 "brand_symbol": symbol.name,
+                "sdk_skill_installed": True,
             }
             if args.browser_workspace:
                 browser_package = root / "browser-package"

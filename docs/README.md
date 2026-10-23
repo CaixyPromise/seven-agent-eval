@@ -10,6 +10,7 @@
 | 指定候选参数并配对比较 | [参数比较](parameter-comparison.md) |
 | Python 扩展 | [Python SDK](python-extensions.md) |
 | TypeScript/JavaScript 扩展 | [TS/JS SDK](typescript-extensions.md) |
+| 使用 AI 助手编写扩展 | [SDK 开发 Skill](../skills/seven-eval-sdk/SKILL.md)、[接入说明](ai-development.md) |
 | 分批 Processor、大小与查询上限、结果包 | [当前执行契约](bounded-evaluation.md) |
 | 结构定义 | [JSON Schema](../protocol/schemas/exchange.json) |
 | 贡献、测试与本地构建 | [贡献指南](../CONTRIBUTING.md) |

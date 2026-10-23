@@ -1,10 +1,10 @@
-# 0.1.0-alpha.1 首发候选说明
+# v0.1.0-alpha.1 首发候选说明
 
 状态：本地候选，尚未发布。SDK 当前版本为 0.1.0；候选发行名称不表示已经发布 SDK。
 许可证：Apache-2.0，Copyright 2026 CaixyPromise，见根 LICENSE 和 NOTICE。
-已获准保留历史作者与邮箱。材料公开权利及安全反馈信息待确认，
-清单见 [public-scope.md](public-scope.md)。拟使用 gh 本机配置的 CaixyPromise 账户，
-其令牌当前无效；公开仓库尚未创建。
+已确认公开范围、保留两张原型图和历史作者与邮箱，清单见 [public-scope.md](public-scope.md)。
+仓库确定为 `CaixyPromise/seven-agent-eval`，gh 登录与账户 API 检查成功。
+漏洞反馈选 GitHub private vulnerability reporting，待仓库创建后启用验证。
 
 ## 本次提供
 
@@ -13,6 +13,7 @@
 - 生产完成事件持续评分、窗口报告、显式候选参数比较。
 - 本地 Ant Design/ECharts 工作台，2.0 格式 `.seven.eval` 可携带结果。
 - Python 与 TS/JS 扩展、安装目录运行，以及无 Python/Node 的结果查看器。
+- 随仓库和安装包提供 `seven-eval-sdk` Skill，指导 AI 助手开发、验证和交付扩展。
 
 ## 安装与边界
 
@@ -27,6 +28,7 @@ CI 已配置，GitHub 托管执行待仓库就绪后验证；公开下载地址�
 
 ## 发布候选证据
 
-安装产物与重开验收见 `artifacts/apache-release/`（本地产物，不提交生成数据）。
+最新 Logo 安装产物验收见 `artifacts/brand-checkpoint/`；本轮文档/Skill 候选验收见
+`artifacts/alpha1-docs/`（本地产物，不提交生成数据）。
 源代码、许可证、SDK 元数据和本文纳入本地 checkpoint。
 最终命令、退出码及历史审查见 [open-source-readiness.md](open-source-readiness.md)。

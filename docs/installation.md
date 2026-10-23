@@ -1,6 +1,10 @@
 # 安装与独立运行
 
-当前为本地 Alpha 候选，尚无公开下载地址。先按本文末尾开发入口构建目录包；公开发布仍需确认许可证。
+当前为本地 `v0.1.0-alpha.1` 候选，Apache-2.0 已确定，尚无公开下载。
+目标仓库为 `CaixyPromise/seven-agent-eval`；当前可按本文末尾开发入口构建目录包。
+
+安装包同时携带 SDK 开发 Skill，入口为 `skills/seven-eval-sdk/SKILL.md`。
+将该 Skill 交给 AI 助手，或按 [AI 辅助开发说明](ai-development.md) 安装到项目内使用。
 
 发行目录包含 CLI/server、内置配方、Python/TS SDK、worker、协议、编译后的 UI、示例，以及按 `uv.lock` 摘要校验的 Python 3.11 wheels。下载/构建时需要网络，安装过程离线；不需要 Go、uv、pnpm 或 npm。用户数据必须放在安装目录外。
 

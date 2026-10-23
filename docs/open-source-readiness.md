@@ -1,15 +1,25 @@
 # 开源首发准备记录
 
-本轮目标：本地 Alpha 候选准备，不创建公开仓库、不推送、不打发布 tag。
-基线 `56d3631`，同一分支 `codex/agent-rag-phase3`。拟议版本 `0.1.0-alpha.1`，
-不是已发布版本。许可证建议见 [选型](licensing.md)。
+## 当前决定（2026-10-24）
+
+- 当前分支 main，首发候选 **v0.1.0-alpha.1**；SDK 元数据为 0.1.0，未发布到注册表。
+- Apache-2.0、Copyright 2026 CaixyPromise、公开范围与保留两张原型图均已确认。
+- 保留 Git 历史及作者邮箱；目标仓库 **CaixyPromise/seven-agent-eval**。
+- gh 登录和账户 API 已重新核对成功；此前 401 属历史状态。
+- 漏洞反馈确定采用 GitHub private vulnerability reporting，仓库创建后需启用验证。
+- 目前仅本地 checkpoint；未创建远程仓库、推送或发布 tag；托管 CI 尚未执行。
+- SDK 开发 Skill 随源码和目录包提供，见 [AI 辅助开发](ai-development.md)。
+
+下文保留此前各轮验证的实际时点。最初基线为 `56d3631`，开发分支
+`codex/agent-rag-phase3`，后已建立本地 main；历史中的待确认事项以本节为准。
+许可证见 [已确认决定](licensing.md)。
 
 ## 公开范围
 
 - 当前源码、协议、内置配方、合成 fixtures、SDK 和文档；不包含状态、venv、缓存及结果包。
 - Git 历史 14 个基线提交已使用 Gitleaks 8.30.1 全历史扫描，无命中；暂存新增内容也已扫描无命中。
 - `public_content_check.py` 检查受跟踪的私有/生成路径、个人绝对路径与 Markdown 本地链接。
-- 两张原型 PNG 为当前唯一受跟踪二进制，已查看：为示例客服界面，无可见凭据；公开授权由所有者确认。
+- 两张原型 PNG 已查看：为示例客服界面，无可见凭据；所有者已确认保留公开。
 - 历史曾提交 11,750 字节的 `artifacts/phase2/window.seven.eval`，当前树已删除。
   已只读展开检查 6 个成员、12 个合成退款问答；无个人绝对路径，解包内容 Gitleaks 扫描无命中。
   `scripts/history_payload_check.py` 可重复该检查，临时展开内容已删除；未重写历史。
@@ -61,12 +71,12 @@ clean_acceptance 从 Git index tree 导出到临时独立仓库，只使用受�
 尚未公开仓库，GitHub 托管运行状态为 NOT_RUN；本地执行和静态检查分别记录。
 首次远程运行通过前不添加绿色 CI badge。
 
-## 发布前仍需所有者确定
+## 发布前剩余执行事项
 
-1. 原型图与代码/文档/合成示例公开权利，具体路径见 [公开清单](public-scope.md)。
-2. Apache-2.0、署名 CaixyPromise 和保留作者邮箱已于 2026-10-24 确认。
-3. 使用本机 gh 账户的意向已确认；实际公开仓库地址及私密漏洞报告渠道待落实。
-4. 单独授权推送/发布；本 checkpoint 不进行这些动作。
+1. 获得单独远程操作授权后，创建已选定的仓库并配置 remote。
+2. 启用、验证 GitHub private vulnerability reporting，更新渠道可用状态。
+3. 首次运行托管 CI，核对实际结果后再发布候选 tag/Release 与安装包。
+4. 本地源码、Skill、文档与安装验收收 checkpoint；不重复询问已确定的署名与公开范围。
 
 依赖 notices 随发行包生成；清单不等于法律兼容性或漏洞审计结论。
 剩余真实生产验收和额外平台支持不是 Alpha 功能声明。
@@ -130,7 +140,32 @@ GitHub 托管 CI 运行证据，没有推送、tag 或真实生产调用。
 本轮未更改执行算法，未重跑完整 race/百万容量套件；未新增浏览器交互或跨 OS 验收。
 临时安装环境由既有脚本 finally 清理，保留小型报告与结果包。
 
-所有者已允许历史姓名/邮箱公开。待审公开路径见 [public-scope.md](public-scope.md)。
-本机 gh 配置账户 CaixyPromise，认证状态为无效令牌，`gh api user` 返回 401；
-未请求或输出令牌，未创建仓库。私密漏洞反馈渠道仍待配置。
-本轮只有本地 checkpoint，无推送、tag 或公开。
+此轮时点所有者已允许历史姓名/邮箱公开；其后确认的完整范围见 [public-scope.md](public-scope.md)。
+当时 gh API 返回 401，后续重新检查已成功。漏洞渠道现已选定 GitHub private vulnerability
+reporting，启用仍待远程仓库创建。以上历史过程均未推送或公开。
+
+## v0.1.0-alpha.1 文档与 Skill checkpoint
+
+本轮完善中文 README，明确调用/历史/持续评分/参数比较、Python/TS 扩展、安装与查看器。
+修正 TS 文档示例：处理的 Case 数不再冒充 scored KPI。首发范围、账户、安全反馈方式已同步。
+新增 `skills/seven-eval-sdk`，含跨语言协议参考与等价 Processor 模板；安装包包含 Skill。
+`scripts/clean_acceptance.py` 的许可证记录修正为已选定的 Apache-2.0。
+
+可重复验证：
+
+```sh
+make build
+pnpm --dir web test
+python3 scripts/skill_acceptance.py
+python3 -m unittest discover -s scripts -p 'test_release_tools.py' -v
+python3 scripts/public_content_check.py
+git diff --check
+```
+
+Skill frontmatter 另用 skill-creator 的 quick_validate.py 检查。
+行为验收使用真实 Go CLI 与 Python/Node worker，包含 false、0、null 与 schema 执行错误；
+比较完整 Case 与 Processor 输出，并校验导出包。不是仅检查 Markdown 语法。
+输出在 `artifacts/alpha1-docs/skill/acceptance.json`。
+从最终 checkpoint 生成的目录包与安装验收输出在 `artifacts/alpha1-docs/checkpoint/`，
+记录 SDK Skill 安装、品牌资源提供、完整 Run 重开和临时目录清理状态。
+本轮不新增浏览器/真实模型/生产验证；既有 Logo 视觉验收见品牌接入记录。

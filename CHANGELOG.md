@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — proposed 0.1.0-alpha.1
+## v0.1.0-alpha.1 — local candidate (unreleased)
 
 Local candidate; no tag, public release or registry publication exists. Licensed under
 Apache-2.0, copyright 2026 CaixyPromise. SDK package versions remain 0.1.0 development metadata.
@@ -17,6 +17,8 @@ See [candidate release notes](docs/release-alpha.md) for scope and verification.
 - Bounded input/results, recovery and opt-in stopped-service retention maintenance.
 - Ant Design/ECharts reports and portable 2.0 viewer without Python/Node.
 - Directory install/doctor/uninstall; macOS arm64 and Debian arm64 container evidence.
+- Portable `seven-eval-sdk` Skill with Python/TS Processor templates and real-worker validation.
+- Confirmed public scope, retained prototypes and Git history, repository name and private reporting choice.
 
 ### Breaking development changes
 

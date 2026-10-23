@@ -94,6 +94,7 @@ def main():
             "examples",
             "README.md",
             "docs",
+            "skills",
             "CONTRIBUTING.md",
             "SECURITY.md",
             "CHANGELOG.md",
