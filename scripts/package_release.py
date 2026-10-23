@@ -79,8 +79,11 @@ def main():
         for relative in [
             "sdk/python/src",
             "sdk/python/pyproject.toml",
+            "sdk/python/LICENSE",
             "sdk/python/uv.lock",
             "sdk/typescript/src",
+            "sdk/typescript/package.json",
+            "sdk/typescript/LICENSE",
             "sdk/typescript/dist",
             "sdk/typescript/pnpm-lock.yaml",
             "protocol/schemas",

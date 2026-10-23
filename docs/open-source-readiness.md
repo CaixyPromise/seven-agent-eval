@@ -63,9 +63,9 @@ clean_acceptance 从 Git index tree 导出到临时独立仓库，只使用受�
 
 ## 发布前仍需所有者确定
 
-1. 项目许可证、署名主体、原型图与代码公开权利。
-2. 是否接受现有 Git 历史中的作者邮箱公开。
-3. 实际公开仓库地址，以及可用的私密漏洞报告渠道。
+1. 原型图与代码/文档/合成示例公开权利，具体路径见 [公开清单](public-scope.md)。
+2. Apache-2.0、署名 CaixyPromise 和保留作者邮箱已于 2026-10-24 确认。
+3. 使用本机 gh 账户的意向已确认；实际公开仓库地址及私密漏洞报告渠道待落实。
 4. 单独授权推送/发布；本 checkpoint 不进行这些动作。
 
 依赖 notices 随发行包生成；清单不等于法律兼容性或漏洞审计结论。
@@ -102,5 +102,35 @@ temporary_data_removed=true。临时安装/源码/执行状态均已删除；未
 
 收本地提交后再从该提交生成 `artifacts/open-source/checkpoint/` 发行包并复验安装，
 其 manifest 的 commit/source_tree 与本地提交对应。上述完整回归的源码差异只限文档/CI。
-公开发布前仍须完成许可证与公开范围决定；本轮没有新增浏览器交互、Linux 容器或
+当时公开发布前仍须完成许可证与公开范围决定；下节记录后续许可证确认。本轮没有新增浏览器交互、Linux 容器或
 GitHub 托管 CI 运行证据，没有推送、tag 或真实生产调用。
+
+## Apache-2.0 首发收口（2026-10-24）
+
+在本地 main 完成，许可证 Apache-2.0 与版权署名 CaixyPromise 已由所有者确认。
+根 LICENSE、NOTICE、SDK 独立 LICENSE 和 Python/TS/Web SPDX 元数据均已加入；
+安装包携带 SDK 元数据、根许可证、署名及第三方通知。SDK 版本维持 0.1.0，
+候选发行标识为 0.1.0-alpha.1，尚未发布。
+
+本轮新执行检查（全部退出 0）：
+
+- `make setup`、`make build`：Python 环境和 TS/UI 构建完成，Vite 既有大 chunk 警告保留。
+- 发布工具 unittest 3 项、TS SDK 测试 5 项；`uv build --project sdk/python` 构建 sdist/wheel。
+- 最终安装脚本：仅使用发行包安装，HTTP 实际调用 1 次，reference 未泄漏；
+  Package 搬迁/删除，无 Node 时 Python 可用，无 Node/Python 查看器完整 Run 相等；
+  TS KPI 为 scored 5 / coverage 1 / anomalies 2；重装/卸载保留用户内容。
+- Gitleaks 修改前全历史 15 提交、历史 ZIP 展开扫描均无命中。
+  检查 528 个可达 blob，个人绝对路径命中 0；历史中仍留有一份已从当前树删除的合成结果包。
+- `git fsck --full` 无损坏，报告不可达 blob/tree；不属于分支可达历史，未进行 GC 或重写。
+
+证据：`artifacts/apache-release/precommit/installed/acceptance.json`；checkpoint 提交后
+从同一提交重新构建发行包并安装验证，最终证据固定为
+`artifacts/apache-release/checkpoint/installed/acceptance.json` 与相邻 `releases/`。
+打包时校验 LICENSE/NOTICE、SDK SPDX 和 wheel 元数据，结果包 CLI verify。
+本轮未更改执行算法，未重跑完整 race/百万容量套件；未新增浏览器交互或跨 OS 验收。
+临时安装环境由既有脚本 finally 清理，保留小型报告与结果包。
+
+所有者已允许历史姓名/邮箱公开。待审公开路径见 [public-scope.md](public-scope.md)。
+本机 gh 配置账户 CaixyPromise，认证状态为无效令牌，`gh api user` 返回 401；
+未请求或输出令牌，未创建仓库。私密漏洞反馈渠道仍待配置。
+本轮只有本地 checkpoint，无推送、tag 或公开。

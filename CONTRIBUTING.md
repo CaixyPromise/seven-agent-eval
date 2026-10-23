@@ -1,8 +1,10 @@
 # Contributing
 
-This is a local Alpha candidate. Public contribution intake will open after the owner selects
-a license and publishes the repository. Do not assume a license grant or submit confidential
-code/data. See [licensing status](docs/licensing.md).
+This is a local Alpha candidate licensed under [Apache-2.0](LICENSE). Public contribution
+intake will open when the repository is published. Contributions intentionally submitted for
+inclusion are licensed under Apache-2.0 unless explicitly stated otherwise, as described in
+section 5 of the license. Only submit material you are entitled to contribute; do not submit
+confidential code/data. See [licensing scope](docs/licensing.md).
 
 ## Development
 

@@ -4,9 +4,10 @@ Independent Go + Python + TypeScript + React monorepo for portable, evidence-bas
 It provides offline invocation/history evaluation, continuous event scoring, explicit candidate
 comparison, replaceable evaluations/statistics/conclusions, a local UI and portable `.seven.eval` reports.
 
-**Status: local Alpha release candidate; not published.** Project licensing awaits the owner's
-decision; see [license recommendation](docs/licensing.md). This checkpoint does not grant an
-open-source license. Real production acceptance (T14) remains pending.
+**Status: local Alpha release candidate; not published.** Licensed under
+[Apache-2.0](LICENSE); see [licensing and third-party scope](docs/licensing.md).
+Real production acceptance (T14) remains pending. Public repository and security contact
+details will be added before publication.
 
 ## Start here
 

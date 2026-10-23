@@ -15,6 +15,7 @@
 | 贡献、测试与本地构建 | [贡献指南](../CONTRIBUTING.md) |
 | 安全边界及漏洞报告状态 | [安全说明](../SECURITY.md) |
 | 版本范围和未完成项目 | [变更记录](../CHANGELOG.md) |
+| 首发候选与公开清单 | [首发说明](release-alpha.md)、[公开范围](public-scope.md) |
 
 指标由 Evaluator 产出，统计由 Processor 计算，结论由 Conclusion 扩展提供。
 覆盖率不是业务正确率；缺失、跳过、预算耗尽、不可计算与错误不得转成零分。

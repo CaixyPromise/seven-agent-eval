@@ -2,8 +2,9 @@
 
 ## Unreleased — proposed 0.1.0-alpha.1
 
-Local candidate; no tag, public release or registry publication exists. License selection
-is pending. SDK package versions remain 0.1.0 development metadata.
+Local candidate; no tag, public release or registry publication exists. Licensed under
+Apache-2.0, copyright 2026 CaixyPromise. SDK package versions remain 0.1.0 development metadata.
+See [candidate release notes](docs/release-alpha.md) for scope and verification.
 
 ### Available
 
