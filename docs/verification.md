@@ -1,5 +1,7 @@
 # 第一阶段验收记录
 
+> 历史记录，仅描述第一阶段当时的提交和测试状态。当前安装与容量记录见 [第五阶段](phase5-progress.md)，首发准备的新验收见 [开源准备](open-source-readiness.md)。以下旧分支、未提交状态和测试数量不是当前状态。
+
 日期：2026-09-05。环境：macOS arm64，Go 1.25.1，uv Python 3.11.14，Node 20.19.5，pnpm 10.24.0。
 仓库：独立本地 Git，分支 `codex/offline-eval-phase1`；未创建远程、未提交、未推送。
 

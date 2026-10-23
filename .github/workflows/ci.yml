@@ -1,0 +1,76 @@
+name: Validate
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.25.1'
+          cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19.5'
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: '10.24.0'
+      - uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6.0.1
+        with:
+          version: '0.10.2'
+      - run: make setup
+      - run: pnpm --dir web audit --audit-level=high
+      - run: pnpm --dir sdk/typescript audit --audit-level=high
+      - run: make test
+      - run: go vet ./...
+      - run: make build
+      - run: python3 scripts/public_content_check.py
+      - run: python3 scripts/acceptance.py
+      - run: uv run --project sdk/python python scripts/phase3_acceptance.py
+      - run: uv run --project sdk/python python scripts/typescript_acceptance.py
+      - run: uv run --project sdk/python python scripts/comparison_acceptance.py
+      - run: uv run --project sdk/python python scripts/live_acceptance.py
+      - run: uv run --project sdk/python python scripts/seven_acceptance.py
+      - run: git diff --exit-code
+      - name: Scan all reachable commit history for credentials
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          "$(go env GOPATH)/bin/gitleaks" git --redact --no-banner --log-opts=--all .
+          PATH="$(go env GOPATH)/bin:$PATH" python3 scripts/history_payload_check.py
+  distribution:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.25.1'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19.5'
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: '10.24.0'
+      - uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6.0.1
+        with:
+          version: '0.10.2'
+      - name: Clean tracked-source and installed-distribution acceptance
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11 --seed "$RUNNER_TEMP/release-python"
+          python3 scripts/clean_acceptance.py --python "$RUNNER_TEMP/release-python/bin/python"

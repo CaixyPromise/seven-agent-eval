@@ -1,5 +1,7 @@
 # 安装与独立运行
 
+当前为本地 Alpha 候选，尚无公开下载地址。先按本文末尾开发入口构建目录包；公开发布仍需确认许可证。
+
 发行目录包含 CLI/server、内置配方、Python/TS SDK、worker、协议、编译后的 UI、示例，以及按 `uv.lock` 摘要校验的 Python 3.11 wheels。下载/构建时需要网络，安装过程离线；不需要 Go、uv、pnpm 或 npm。用户数据必须放在安装目录外。
 
 ## 从目录包安装
@@ -36,7 +38,7 @@ cp -R /absolute/install/seven-eval/examples/typescript ./team-evaluation
 "$SEVEN" --package ./team-evaluation serve
 ```
 
-TS 示例的 KPI 来自 `team-summary@2.0.0`，不是前端补算。`examples/http` 和 `examples/rag` 提供 HTTP 计划；按示例说明把 endpoint 指向你的目标，reference 不进入默认请求。状态默认在 Package 的 `.seven-evaluate/`，不写进安装目录。无凭据 HTTP 目标也随包提供：运行 `python3.11 /absolute/install/seven-eval/scripts/http_fixture.py`，复制 `examples/http` 到外部目录后运行 `smoke`（目标绑定回环端口7432）。
+TS 示例的 KPI 来自 `team-summary@2.0.0`，不是前端补算。`examples/http` 和 `examples/rag-http` 提供 HTTP 计划；按 [RAG 使用说明](phase3-usage.md) 配置 endpoint，reference 不进入默认请求。状态默认在 Package 的 `.seven-evaluate/`，不写进安装目录。无凭据 HTTP 目标随包提供：运行 `python3.11 /absolute/install/seven-eval/scripts/http_fixture.py`，复制 `examples/http` 到外部目录后运行 `smoke`（目标绑定回环端口7432）。RAG 受控目标为 `scripts/rag_target.py`。
 
 ## 不安装 Python/Node，只查看结果
 

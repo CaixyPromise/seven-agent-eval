@@ -4,6 +4,25 @@ Independent Go + Python + TypeScript + React monorepo for portable, evidence-bas
 It provides offline invocation/history evaluation, continuous event scoring, explicit candidate
 comparison, replaceable evaluations/statistics/conclusions, a local UI and portable `.seven.eval` reports.
 
+**Status: local Alpha release candidate; not published.** Project licensing awaits the owner's
+decision; see [license recommendation](docs/licensing.md). This checkpoint does not grant an
+open-source license. Real production acceptance (T14) remains pending.
+
+## Start here
+
+- **Use the tool:** [directory installation](docs/installation.md) and its credential-free example.
+  Public release downloads are not available yet.
+- **Build from source:** follow the commands below; fixtures use controlled local targets.
+- **Evaluate RAG:** [sources, mappings, retrieval metrics and judge](docs/phase3-usage.md).
+- **Score events:** [continuous scoring](docs/continuous-scoring.md).
+- **Compare candidates:** [parameter comparison](docs/parameter-comparison.md).
+- **Extend:** [Python](docs/python-extensions.md), [TS/JS](docs/typescript-extensions.md).
+- **Reference:** [current documentation](docs/README.md), [release notes](CHANGELOG.md),
+  [security boundaries](SECURITY.md).
+
+The core is platform-independent; Seven Agent is an adapter. Missing evidence and execution
+errors remain distinct from zero scores. Default conclusions do not infer business correctness.
+
 ## Prepare and build
 
 Development baseline: Go 1.25, uv with Python 3.11, Node 20.19+ and pnpm 10.
@@ -56,10 +75,12 @@ my-evaluation/
 ├── evaluation.yaml
 ├── plans/smoke.yaml
 ├── datasets/sample/cases.jsonl
-├── adapters/                 # optional HTTP YAML or Python subjects
-├── evaluators/               # optional Python evaluators
-├── processors/               # optional Python statistics
-├── conclusions/              # optional Python conclusions
+├── sources/                  # JSONL/CSV/TREC/BEIR source descriptors
+├── mappings/                 # restricted field mappings
+├── adapters/                 # HTTP/Seven YAML or Python/TS/JS subjects
+├── evaluators/               # Python/TS/JS evaluators
+├── processors/               # Python/TS/JS batched statistics
+├── conclusions/              # Python/TS/JS conclusions
 ├── catalogs/                 # custom metric definitions
 └── tests/                    # not discovered as runtime assets
 ```
@@ -157,11 +178,12 @@ Source snapshots remain private runtime files and are not included as executable
 - Scoring uses original in-memory values. Stored evidence is redacted by known credential keys and
   configured auth environment values, with redaction_applied recorded; redacted exports may not support
   exact re-evaluation. This is not a general PII detector.
-- Local server only: no remote bind, authentication/multi-tenancy or untrusted code sandbox in phase 1.
+- Local server only: no remote bind, authentication/multi-tenancy or untrusted code sandbox.
 - Controlled offline, live EEP/OTLP JSON, Agent/RAG, Episode, Python/Node extensions and explicit
   candidate comparison have local acceptance records in `docs/phase2-progress.md`,
   `docs/phase3-progress.md` and `docs/phase4-progress.md`. These do not claim real production
-  acceptance, arbitrary OTLP graphs, automatic parameter search or cross-platform installation.
+  acceptance, arbitrary OTLP graphs or automatic parameter search. The separately validated
+  installation scope is macOS arm64 and Debian arm64 containers; see the installation matrix.
 
 ## Explicit retention and resilience
 
@@ -180,9 +202,11 @@ Deduplication receipts and expired-window ranges remain, so old traffic cannot s
 Exported `.seven.eval` files remain independent. This first maintenance implementation does not promise
 constant memory for unlimited historical receipts or zero-downtime cleanup.
 
-See `docs/phase5-progress.md` for measured workloads, fault tests, current capacity gaps and exact
-maintenance semantics. During a running offline evaluation, `result.json` is a lightweight checkpoint;
-use CLI/server queries for complete live results. The journal is authoritative, SQLite is rebuildable,
-and terminal checkpoints and portable exports still contain the complete Run.
+See `docs/phase5-progress.md` for measured workloads, fault tests and maintenance evidence.
+Run metadata is kept separate from partitioned case results; use CLI/server queries to page through
+evidence. The journal is authoritative, SQLite is rebuildable, and portable 2.0 exports contain
+metadata plus partitioned input/result files. See the bounded execution contract for current limits.
 
-See docs/phase1-contract.md for the public contract and docs/verification.md for current acceptance evidence.
+See [current contracts](docs/README.md) and [release preparation evidence](docs/open-source-readiness.md).
+Phase-numbered records retain historical evidence; their old limits and future-task statements
+do not override the current contract.

@@ -9,6 +9,7 @@ build:
 	pnpm --dir web build
 	go build -o bin/seven-eval ./cmd/seven-eval
 test:
+	python3 -m unittest discover -s scripts -p 'test_release_tools.py' -v
 	pnpm --dir sdk/typescript build
 	pnpm --dir sdk/typescript test
 	go test -race ./...
@@ -52,3 +53,7 @@ acceptance-install: release
 acceptance-install-linux: build
 	python3 scripts/package_release.py --python "$(RELEASE_PYTHON)" --os linux --arch arm64
 	python3 scripts/installation_linux.py
+
+.PHONY: acceptance-clean
+acceptance-clean:
+	python3 scripts/clean_acceptance.py --python "$(RELEASE_PYTHON)"

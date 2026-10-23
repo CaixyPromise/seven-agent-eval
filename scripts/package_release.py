@@ -15,6 +15,8 @@ import tarfile
 import tempfile
 from pathlib import Path
 
+from dependency_notices import collect
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -88,15 +90,19 @@ def main():
             "web/dist",
             "examples",
             "README.md",
-            "docs/installation.md",
-            "docs/typescript-extensions.md",
-            "docs/phase3-usage.md",
-            "docs/parameter-comparison.md",
-            "docs/bounded-evaluation.md",
-            "docs/phase5-progress.md",
+            "docs",
+            "CONTRIBUTING.md",
+            "SECURITY.md",
+            "CHANGELOG.md",
+            "THIRD_PARTY_NOTICES.md",
         ]:
             copy(relative)
         copy("scripts/http_fixture.py")
+        copy("scripts/live_fixture.py")
+        copy("scripts/rag_target.py")
+        for optional in ["LICENSE", "NOTICE"]:
+            if (ROOT / optional).is_file():
+                copy(optional)
         (package / "bin").mkdir()
         subprocess.run(
             [
@@ -170,6 +176,7 @@ def main():
                 "macosx_11_0_arm64" if args.arch == "arm64" else "macosx_10_9_x86_64",
             ]
         subprocess.run(command, check=True)
+        collect(package / "third-party", wheels)
         files = []
         for path in sorted(package.rglob("*")):
             if path.is_symlink():
@@ -215,6 +222,9 @@ def main():
             "arch": args.arch,
             "commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+            "source_tree": subprocess.check_output(
+                ["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, text=True
             ).strip(),
             "tracked_diff_sha256": hashlib.sha256(diff).hexdigest(),
             "files": files,
