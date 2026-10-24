@@ -1,7 +1,7 @@
 # 已确认的首发公开范围
 
 2026-10-24：Apache-2.0 和署名 CaixyPromise 已确认，允许保留历史作者与邮箱。
-所有者已确认下列公开范围，两张原型图保留；尚未执行公开。
+所有者已确认下列公开范围，两张原型图保留；源码已推送到公开仓库。
 
 | 内容 | 路径 | 用途与范围 |
 |---|---|---|
@@ -29,8 +29,7 @@ Gitleaks 全历史扫描无命中；历史 ZIP 另行展开扫描无命中。
 
 ## 账户与反馈
 
-2026-10-24 重新检查 gh 登录成功，API 返回账户 CaixyPromise。目标仓库已确定为
-`CaixyPromise/seven-agent-eval`；当日查询该仓库返回 404，本地未配置 remote。
-此前 API 401 是历史状态，现已恢复。当前只进行本地准备。
-私密漏洞渠道已选 GitHub private vulnerability reporting；仓库创建后需启用并验证，
-尚未宣称渠道可用。现有提交邮箱不充当安全联系地址。
+2026-10-24 gh 登录与账户 API 成功，已创建公开仓库 `CaixyPromise/seven-agent-eval`，
+origin 指向该仓库，main 已推送。此前 401/404 均是创建前的历史状态。
+GitHub private vulnerability reporting 已启用，GET API 返回 enabled=true。
+现有提交邮箱不充当安全联系地址。未发布 tag 或 Release。

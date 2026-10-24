@@ -1,7 +1,7 @@
 # Contributing
 
-This is a local Alpha candidate licensed under [Apache-2.0](LICENSE). Public contribution
-intake will open when the repository is published. Contributions intentionally submitted for
+This is a public Alpha candidate licensed under [Apache-2.0](LICENSE). Contributions can be
+submitted to [the repository](https://github.com/CaixyPromise/seven-agent-eval). Contributions intentionally submitted for
 inclusion are licensed under Apache-2.0 unless explicitly stated otherwise, as described in
 section 5 of the license. Only submit material you are entitled to contribute; do not submit
 confidential code/data. See [licensing scope](docs/licensing.md).

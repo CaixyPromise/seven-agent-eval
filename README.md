@@ -6,9 +6,9 @@
 采用 **Go 执行核心 + Python／TypeScript 扩展 + React 工作台**。平台无关，
 Seven Agent 通过适配器接入；其他 HTTP Agent、RAG 服务和已有回答也可评测。
 
-**当前：`v0.1.0-alpha.1` 本地首发候选，尚未公开发布。**
-目标仓库为 `CaixyPromise/seven-agent-eval`，许可证 [Apache-2.0](LICENSE)，
-Copyright 2026 CaixyPromise。公开范围已确认；CI 托管运行与漏洞报告渠道启用待远程仓库就绪。
+**当前：源码已公开，`v0.1.0-alpha.1` 仍为候选，尚未发布 tag 或 Release。**
+仓库为 [CaixyPromise/seven-agent-eval](https://github.com/CaixyPromise/seven-agent-eval)，许可证 [Apache-2.0](LICENSE)，
+Copyright 2026 CaixyPromise。GitHub private vulnerability reporting 已启用。
 SDK 当前版本为 0.1.0，尚未发布到 PyPI／npm。
 
 ## 你可以用它做什么
@@ -195,11 +195,13 @@ make acceptance-live
 
 完整开发与贡献规则见 [CONTRIBUTING.md](CONTRIBUTING.md)，
 全部指南见 [文档索引](docs/README.md)，候选内容见 [Release 说明](docs/release-alpha.md)。
-CI 已提交，但 GitHub 托管运行需要远程仓库就绪；当前没有 CI 通过徽章。
+托管 CI 包含 Linux 回归和手动触发的 macOS 安装验收；实际结果见
+[GitHub Actions](https://github.com/CaixyPromise/seven-agent-eval/actions/workflows/ci.yml)。
 
 漏洞反馈采用目标仓库的 **GitHub private vulnerability reporting**：
-仓库可用且渠道启用后，从 Security → Advisories → Report a vulnerability 提交。
-当前渠道尚未启用；不要在公开 Issue 中附凭据或真实生产 trace。[安全边界与渠道状态](SECURITY.md)。
+从 Security → Advisories → Report a vulnerability 提交，或直接使用
+[私密漏洞报告入口](https://github.com/CaixyPromise/seven-agent-eval/security/advisories/new)。
+不要在公开 Issue 中附凭据或真实生产 trace。[安全边界与渠道状态](SECURITY.md)。
 
 项目按 [Apache-2.0](LICENSE) 授权，署名见 [NOTICE](NOTICE)，第三方通知见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。品牌使用不授予商标权。

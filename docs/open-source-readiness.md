@@ -6,8 +6,9 @@
 - Apache-2.0、Copyright 2026 CaixyPromise、公开范围与保留两张原型图均已确认。
 - 保留 Git 历史及作者邮箱；目标仓库 **CaixyPromise/seven-agent-eval**。
 - gh 登录和账户 API 已重新核对成功；此前 401 属历史状态。
-- 漏洞反馈确定采用 GitHub private vulnerability reporting，仓库创建后需启用验证。
-- 目前仅本地 checkpoint；未创建远程仓库、推送或发布 tag；托管 CI 尚未执行。
+- 公开仓库已创建，main 已推送，origin 指向 `CaixyPromise/seven-agent-eval`。
+- GitHub private vulnerability reporting 已启用，GET API 返回 enabled=true。
+- 托管 CI 已触发；结果见 Actions。未发布 tag 或 Release，需 CI 通过后由所有者确认。
 - SDK 开发 Skill 随源码和目录包提供，见 [AI 辅助开发](ai-development.md)。
 
 下文保留此前各轮验证的实际时点。最初基线为 `56d3631`，开发分支
@@ -73,10 +74,9 @@ clean_acceptance 从 Git index tree 导出到临时独立仓库，只使用受�
 
 ## 发布前剩余执行事项
 
-1. 获得单独远程操作授权后，创建已选定的仓库并配置 remote。
-2. 启用、验证 GitHub private vulnerability reporting，更新渠道可用状态。
-3. 首次运行托管 CI，核对实际结果后再发布候选 tag/Release 与安装包。
-4. 本地源码、Skill、文档与安装验收收 checkpoint；不重复询问已确定的署名与公开范围。
+1. 跟进托管 CI（Linux 回归与 macOS 安装），修复问题并确认最终提交通过。
+2. CI 通过后由所有者单独确认 tag/Release；当前不发布安装包下载。
+3. 仓库、私密反馈渠道、公开范围和许可证已落实，不重复询问。
 
 依赖 notices 随发行包生成；清单不等于法律兼容性或漏洞审计结论。
 剩余真实生产验收和额外平台支持不是 Alpha 功能声明。

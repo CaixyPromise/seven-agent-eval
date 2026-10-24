@@ -2,7 +2,7 @@
 
 项目所有者已于 2026-10-24 选择 **Apache-2.0**。根目录 [LICENSE](../LICENSE)
 保存官方英文全文；Python、TypeScript SDK 和 Web 元数据使用 SPDX 标识 Apache-2.0。
-公开发布尚未执行。以下对比保留选择依据。
+源码已公开；tag/Release 尚未发布。以下对比保留选择依据。
 
 | 选择 | 适用目标 | 取舍 |
 |---|---|---|
@@ -27,4 +27,4 @@
 
 目标仓库为 `CaixyPromise/seven-agent-eval`，漏洞反馈选 GitHub private vulnerability
 reporting。2026-10-24 重新检查 gh/API 登录成功；旧 401 记录为历史状态。
-渠道需在仓库创建后启用验证，当前没有创建仓库或推送，候选为 `v0.1.0-alpha.1`。
+仓库已创建并推送 main，渠道已启用且经 API 验证。候选为 `v0.1.0-alpha.1`，尚无 tag/Release。

@@ -14,12 +14,12 @@ Validation is not a claim of universal content safety.
 
 ## Reporting status
 
-The selected reporting channel is GitHub private vulnerability reporting for
-`CaixyPromise/seven-agent-eval`. Once the repository and channel are available, use its
-Security → Advisories → Report a vulnerability action. During this local preparation the
-repository/channel has not been created or verified. If the action is unavailable, use an
-existing private maintainer contact; do not post secrets, private traces or production data
-in public issues. The maintainer must enable and verify the channel before public release.
+GitHub private vulnerability reporting is enabled for `CaixyPromise/seven-agent-eval`
+(verified through the GitHub API on 2026-10-24). Use
+[Report a vulnerability](https://github.com/CaixyPromise/seven-agent-eval/security/advisories/new)
+or Security → Advisories → Report a vulnerability. If the action is temporarily unavailable,
+use an existing private maintainer contact; do not post secrets, private traces or production
+data in public issues.
 There is no response SLA or stable release line.
 
 Supply the affected version, synthetic reproduction and impact. Only test systems you own or
