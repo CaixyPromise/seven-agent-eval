@@ -1,8 +1,8 @@
 # Changelog
 
-## v0.1.0-alpha.1 — candidate (unreleased)
+## v0.1.0-alpha.1 — 2026-10-24 (Alpha prerelease)
 
-Source is public; no tag, Release or registry publication exists. Licensed under
+Source and macOS arm64 distribution are available as a GitHub prerelease; SDK registries remain unpublished. Licensed under
 Apache-2.0, copyright 2026 CaixyPromise. SDK package versions remain 0.1.0 development metadata.
 See [candidate release notes](docs/release-alpha.md) for scope and verification.
 

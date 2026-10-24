@@ -6,7 +6,7 @@
 采用 **Go 执行核心 + Python／TypeScript 扩展 + React 工作台**。平台无关，
 Seven Agent 通过适配器接入；其他 HTTP Agent、RAG 服务和已有回答也可评测。
 
-**当前：源码已公开，`v0.1.0-alpha.1` 仍为候选，尚未发布 tag 或 Release。**
+**当前版本：[v0.1.0-alpha.1](https://github.com/CaixyPromise/seven-agent-eval/releases/tag/v0.1.0-alpha.1)，Alpha 预发布。**
 仓库为 [CaixyPromise/seven-agent-eval](https://github.com/CaixyPromise/seven-agent-eval)，许可证 [Apache-2.0](LICENSE)，
 Copyright 2026 CaixyPromise。GitHub private vulnerability reporting 已启用。
 SDK 当前版本为 0.1.0，尚未发布到 PyPI／npm。
@@ -47,7 +47,8 @@ make build
 
 安装包用户无需 Go、uv、pnpm 或 npm；执行评测需要 Python 3.11，使用 TS/JS 扩展时需要 Node。
 环境在最终安装目录创建，不复制开发 `.venv`。完整步骤见 [安装说明](docs/installation.md)。
-当前公开下载尚未建立，可从源码构建目录包。
+macOS arm64 用户可从 [Release 下载安装包与 SHA-256](https://github.com/CaixyPromise/seven-agent-eval/releases/tag/v0.1.0-alpha.1)，
+校验后按 [安装说明](docs/installation.md) 安装；其他环境可从源码构建。
 
 ### 调用一个本地 HTTP 目标
 

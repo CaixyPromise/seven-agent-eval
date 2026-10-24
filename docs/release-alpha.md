@@ -1,6 +1,7 @@
-# v0.1.0-alpha.1 首发候选说明
+# v0.1.0-alpha.1 Alpha 发布说明
 
-状态：源码已公开，候选尚未发布 tag/Release。SDK 当前版本为 0.1.0；尚未发布 SDK 注册表包。
+版本采用 GitHub prerelease 发布，见 [Release 页面](https://github.com/CaixyPromise/seven-agent-eval/releases/tag/v0.1.0-alpha.1)。
+SDK 当前版本为 0.1.0；尚未发布 SDK 注册表包。
 许可证：Apache-2.0，Copyright 2026 CaixyPromise，见根 LICENSE 和 NOTICE。
 已确认公开范围、保留两张原型图和历史作者与邮箱，清单见 [public-scope.md](public-scope.md)。
 仓库确定为 `CaixyPromise/seven-agent-eval`，gh 登录与账户 API 检查成功。
@@ -24,7 +25,8 @@ GitHub private vulnerability reporting 已启用，并经 API 确认。
 
 工具服务于可信本地使用；用户扩展不是沙箱，不将服务直接暴露公网。
 真实 Seven、真实模型评分质量和生产 T14 验收仍待完成。
-CI 已在 GitHub 触发，实际结果见仓库 Actions；Release 下载尚未建立。
+运行代码的 Linux/macOS 完整 CI 已通过；最后的发布状态更新为文档改动，
+tag 对应提交的检查见仓库 Actions。Release 附 macOS arm64 安装包及 SHA-256。
 
 ## 发布候选证据
 

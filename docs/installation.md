@@ -1,7 +1,8 @@
 # 安装与独立运行
 
-当前为 `v0.1.0-alpha.1` 候选，Apache-2.0 已确定，尚无 Release 安装包下载。
-源码仓库为 `CaixyPromise/seven-agent-eval`；可按本文末尾开发入口构建目录包。
+当前为 `v0.1.0-alpha.1` Alpha 预发布，按 Apache-2.0 授权。
+macOS arm64 包与 SHA-256 位于 [GitHub Release](https://github.com/CaixyPromise/seven-agent-eval/releases/tag/v0.1.0-alpha.1)。
+源码仓库为 `CaixyPromise/seven-agent-eval`；也可按本文末尾开发入口构建目录包。
 
 安装包同时携带 SDK 开发 Skill，入口为 `skills/seven-eval-sdk/SKILL.md`。
 将该 Skill 交给 AI 助手，或按 [AI 辅助开发说明](ai-development.md) 安装到项目内使用。
