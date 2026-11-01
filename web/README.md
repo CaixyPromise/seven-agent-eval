@@ -52,4 +52,4 @@ the Go file server without extra rewrite rules and preserves browser back/forwar
 
 Tests include false vs zero, recipe replacement/disable, no implicit correctness inference,
 safe known/unknown error messages and no Subject retries. Browser acceptance and review findings
-are recorded in `../docs/design/blue-workspace-review.md`.
+are recorded in `../../seven-agent-docs/seven-agent-eval/docs/design/blue-workspace-review.md`.

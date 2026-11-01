@@ -1,6 +1,6 @@
 # Third-party material
 
-Project licensing is pending; see [the recommendation](docs/licensing.md).
+Project licensing is pending; see [the recommendation](../seven-agent-docs/seven-agent-eval/docs/licensing.md).
 Dependencies retain their own licenses independently of the project's eventual license.
 
 `scripts/dependency_notices.py` inventories resolved Go modules, installed pnpm packages

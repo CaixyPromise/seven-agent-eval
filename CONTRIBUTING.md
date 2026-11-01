@@ -4,7 +4,7 @@ This is a public Alpha candidate licensed under [Apache-2.0](LICENSE). Contribut
 submitted to [the repository](https://github.com/CaixyPromise/seven-agent-eval). Contributions intentionally submitted for
 inclusion are licensed under Apache-2.0 unless explicitly stated otherwise, as described in
 section 5 of the license. Only submit material you are entitled to contribute; do not submit
-confidential code/data. See [licensing scope](docs/licensing.md).
+confidential code/data. See [licensing scope](../seven-agent-docs/seven-agent-eval/docs/licensing.md).
 
 ## Development
 
@@ -29,9 +29,9 @@ do not add million-observation workloads to PR CI.
 
 Run `python3 scripts/public_content_check.py` and `git diff --check` before review.
 The CI uses read-only permissions, pinned actions and no publishing credentials.
-For clean-source and installed-package checks see [release preparation](docs/open-source-readiness.md).
+For clean-source and installed-package checks see [release preparation](../seven-agent-docs/seven-agent-eval/docs/open-source-readiness.md).
 For AI-assisted extension development, read the portable [SDK Skill](skills/seven-eval-sdk/SKILL.md)
-and [setup guide](docs/ai-development.md). Keep templates aligned with the SDK contract and run
+and [setup guide](../seven-agent-docs/seven-agent-eval/docs/ai-development.md). Keep templates aligned with the SDK contract and run
 `make acceptance-skill` when changing them. The selected release candidate is `v0.1.0-alpha.1`.
 
 ## Change expectations

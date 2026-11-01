@@ -16,12 +16,12 @@ SDK 当前版本为 0.1.0，尚未发布到 PyPI／npm。
 | 使用场景 | 当前能力 | 入口 |
 |---|---|---|
 | 离线评测 | 调用 HTTP/Python/TS Subject，或评分已有回答；默认报告开箱可用 | [快速开始](#快速开始) |
-| RAG 评测 | JSONL/CSV/TREC/BEIR；Precision、Recall、F1、MRR、NDCG、MAP；引用检查和可选 judge | [RAG 指南](docs/phase3-usage.md) |
-| 持续评分 | 接收已完成请求的 EEP／OTLP JSON 事件；去重、证据修订、采样、预算和窗口报告 | [持续评分](docs/continuous-scoring.md) |
-| 参数比较 | 冻结同一数据集，运行明确候选配置，配对比较质量、时延和可用成本 | [比较指南](docs/parameter-comparison.md) |
-| 自定义评测 | Python／TS／JS Subject、Evaluator、Processor、Conclusion | [Python SDK](docs/python-extensions.md)、[TS/JS SDK](docs/typescript-extensions.md) |
+| RAG 评测 | JSONL/CSV/TREC/BEIR；Precision、Recall、F1、MRR、NDCG、MAP；引用检查和可选 judge | [RAG 指南](../seven-agent-docs/seven-agent-eval/docs/phase3-usage.md) |
+| 持续评分 | 接收已完成请求的 EEP／OTLP JSON 事件；去重、证据修订、采样、预算和窗口报告 | [持续评分](../seven-agent-docs/seven-agent-eval/docs/continuous-scoring.md) |
+| 参数比较 | 冻结同一数据集，运行明确候选配置，配对比较质量、时延和可用成本 | [比较指南](../seven-agent-docs/seven-agent-eval/docs/parameter-comparison.md) |
+| 自定义评测 | Python／TS／JS Subject、Evaluator、Processor、Conclusion | [Python SDK](../seven-agent-docs/seven-agent-eval/docs/python-extensions.md)、[TS/JS SDK](../seven-agent-docs/seven-agent-eval/docs/typescript-extensions.md) |
 | AI 辅助开发 | 用内置 Skill 指导 AI 编写扩展、发现计划、执行验证和导出 | [SDK 开发 Skill](skills/seven-eval-sdk/SKILL.md) |
-| 分享结果 | 单文件 `.seven.eval`；无原项目、Python、Node 也能用查看器重开 | [安装与查看器](docs/installation.md) |
+| 分享结果 | 单文件 `.seven.eval`；无原项目、Python、Node 也能用查看器重开 | [安装与查看器](../seven-agent-docs/seven-agent-eval/docs/installation.md) |
 
 评测 K 与目标检索 top_k 是两件事：前者对已取得的排名计算不同截断指标，后者改变目标参数并重新调用。
 基础报告的评分覆盖率表示有可用评分的比例，不代表业务正确率。
@@ -46,9 +46,9 @@ make build
 停止 server 后再在同一工作区执行 CLI run。
 
 安装包用户无需 Go、uv、pnpm 或 npm；执行评测需要 Python 3.11，使用 TS/JS 扩展时需要 Node。
-环境在最终安装目录创建，不复制开发 `.venv`。完整步骤见 [安装说明](docs/installation.md)。
+环境在最终安装目录创建，不复制开发 `.venv`。完整步骤见 [安装说明](../seven-agent-docs/seven-agent-eval/docs/installation.md)。
 macOS arm64 用户可从 [Release 下载安装包与 SHA-256](https://github.com/CaixyPromise/seven-agent-eval/releases/tag/v0.1.0-alpha.1)，
-校验后按 [安装说明](docs/installation.md) 安装；其他环境可从源码构建。
+校验后按 [安装说明](../seven-agent-docs/seven-agent-eval/docs/installation.md) 安装；其他环境可从源码构建。
 
 ### 调用一个本地 HTTP 目标
 
@@ -67,7 +67,7 @@ python3 scripts/http_fixture.py
 
 受控目标监听 `127.0.0.1:7432`。默认请求只使用 Case inputs，不发送 reference。
 自己的 HTTP 目标通过 adapter 配置 endpoint、请求/响应映射、超时及凭据环境变量名；
-请求字段映射不执行任意表达式。RAG 响应可映射检索、引用和工具证据，见 [数据与适配器](docs/phase3-usage.md)。
+请求字段映射不执行任意表达式。RAG 响应可映射检索、引用和工具证据，见 [数据与适配器](../seven-agent-docs/seven-agent-eval/docs/phase3-usage.md)。
 
 ### 创建自己的 Evaluation Package
 
@@ -143,7 +143,7 @@ TS/JS 支持 ESM、Node 内置模块和 Package 内相对导入；第三方 npm 
 
 Skill 提供 Python/TS 可运行模板、指标与 KPI 语义、错误/取消/session 规则和交付检查。
 它随源码与安装包分发，可复制到 AI 工具的项目级 Skill 目录；
-不会自动安装或改变助手配置。[接入与使用](docs/ai-development.md)说明了可携带方式。
+不会自动安装或改变助手配置。[接入与使用](../seven-agent-docs/seven-agent-eval/docs/ai-development.md)说明了可携带方式。
 
 ## 导出与独立查看
 
@@ -165,7 +165,7 @@ Processor 输出、Conclusion、码表、schema 与自包含摘要 HTML。
 
 stream 计划只评分已发生的请求，不调用 Subject。通过 EEP 或支持的 OTLP/OpenInference JSON 子集接入，
 接收持久化后 ACK；暂停期间继续接收，恢复后处理积压。窗口按事件时间聚合，迟到证据产生新修订；
-导出固定快照。[持续评分快速开始](docs/continuous-scoring.md)提供无凭据事件源。
+导出固定快照。[持续评分快速开始](../seven-agent-docs/seven-agent-eval/docs/continuous-scoring.md)提供无凭据事件源。
 
 Episode 内 Turn 顺序执行并共享新建 session，Episode 之间隔离；失败、超时或取消保留部分结果。
 Seven Workspace SSE 和历史导入已经过受控协议验收，真实 Seven 环境与生产流量验收仍待完成。
@@ -174,12 +174,12 @@ Seven Workspace SSE 和历史导入已经过受控协议验收，真实 Seven �
 
 - 默认配方生成基础结果、统计和结论；judge 显式启用，默认不调用付费模型。
 - 离线默认串行，当前上限 10,000 个展开 Case、单来源文件 1 GiB、规范化记录 2 MiB。
-  调用 Subject 前完成全量输入校验；其他输出/结果包限制见 [有界执行契约](docs/bounded-evaluation.md)。
+  调用 Subject 前完成全量输入校验；其他输出/结果包限制见 [有界执行契约](../seven-agent-docs/seven-agent-eval/docs/bounded-evaluation.md)。
 - 无业务请求自动重试；取消或中断保留部分结果，重启不自动重放不确定的副作用调用。
 - 默认保留数据。清理是停服后的显式维护，先 preview 再 apply；先导出需要保留的证据。
 - 本地可信用户工具：仅回环服务，无公网认证、多租户隔离或不可信代码沙箱。
 - 最近原生安装验收为 macOS arm64；另有 Debian arm64 容器验收记录。
-  Windows、x86_64 安装、独立物理第二机器、签名/公证尚未验收，见 [支持矩阵](docs/installation.md)。
+  Windows、x86_64 安装、独立物理第二机器、签名/公证尚未验收，见 [支持矩阵](../seven-agent-docs/seven-agent-eval/docs/installation.md)。
 - 当前没有自动参数搜索、OTLP protobuf、第三方 npm 依赖支持或生产 SLA。
 
 源码运行、受控协议、浏览器验收和真实生产验收分别记录；历史阶段文档不覆盖当前协议。
@@ -195,7 +195,7 @@ make acceptance-live
 ```
 
 完整开发与贡献规则见 [CONTRIBUTING.md](CONTRIBUTING.md)，
-全部指南见 [文档索引](docs/README.md)，候选内容见 [Release 说明](docs/release-alpha.md)。
+全部指南见 [文档索引](../seven-agent-docs/seven-agent-eval/docs/README.md)，候选内容见 [Release 说明](../seven-agent-docs/seven-agent-eval/docs/release-alpha.md)。
 托管 CI 包含 Linux 回归和手动触发的 macOS 安装验收；实际结果见
 [GitHub Actions](https://github.com/CaixyPromise/seven-agent-eval/actions/workflows/ci.yml)。
 

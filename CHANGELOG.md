@@ -4,7 +4,7 @@
 
 Source and macOS arm64 distribution are available as a GitHub prerelease; SDK registries remain unpublished. Licensed under
 Apache-2.0, copyright 2026 CaixyPromise. SDK package versions remain 0.1.0 development metadata.
-See [candidate release notes](docs/release-alpha.md) for scope and verification.
+See [candidate release notes](../seven-agent-docs/seven-agent-eval/docs/release-alpha.md) for scope and verification.
 
 ### Available
 
@@ -33,4 +33,4 @@ Processor APIs. Old 1.0 bundles are rejected. Regenerate fixtures; no migration 
 Real Seven/RAG/model quality and production T14 remain pending. No Windows/x86_64 install claim,
 signing/notarization, auto-updater, third-party npm imports, OTLP protobuf, remote authentication,
 production SLA or automatic parameter search. Vite large chunks remain a performance risk.
-See [bounds](docs/bounded-evaluation.md) and [installation matrix](docs/installation.md).
+See [bounds](../seven-agent-docs/seven-agent-eval/docs/bounded-evaluation.md) and [installation matrix](../seven-agent-docs/seven-agent-eval/docs/installation.md).
