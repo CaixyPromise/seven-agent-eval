@@ -1,7 +1,9 @@
 name: Validate
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -35,7 +37,8 @@ jobs:
       - run: pnpm --dir sdk/typescript audit --audit-level=high
       - run: make test
       - run: go vet ./...
-      - run: make build
+      - name: Build acceptance test prerequisites
+        run: make build
       - run: python3 scripts/public_content_check.py
       - run: python3 scripts/acceptance.py
       - run: uv run --project sdk/python python scripts/phase3_acceptance.py
